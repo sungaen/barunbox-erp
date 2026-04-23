@@ -379,7 +379,7 @@ async function api(table,method,data,qs){
   // GET 요청 시 limit 파라미터로 최대 10000개
   let fullQs=qs||'';
   if(!method||method==='GET'){
-    fullQs=fullQs+(fullQs?'&':'')+'limit=10000';
+    if(fullQs.indexOf('limit=')<0)fullQs=fullQs+(fullQs?'&':'')+'limit=10000';
   }
   let url=`${SUPA_URL}/rest/v1/${table}${fullQs?'?'+fullQs:''}`;
   const h={'apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,'Content-Type':'application/json','Prefer':'return=representation'};
@@ -3627,7 +3627,7 @@ const MOLD_LOCS=['창고','그린','정도아트팩','수도인쇄','흥덕문�
 
 async function syncMolds(){
   // 목형 목록만 먼저 로드 (빠른 초기화)
-  const res=await api('molds','GET',null,'order=client.asc,product.asc&select=*');
+  const res=await api('molds','GET',null,'order=id.asc&select=*');
   if(res){
     molds=res.map(m=>({...m,history:[]}));
     moldFiltered=[...molds];
@@ -3645,7 +3645,8 @@ async function loadMoldHistory(moldId){
 function rMolds(){
   const el=document.getElementById('panel-molds');if(!el)return;
   if(!molds||molds.length===0){
-    el.innerHTML='<div style="padding:40px;text-align:center;color:#aaa;font-size:14px;">목형 데이터를 불러오는 중...<br><br><button class="btn btn-sm" onclick="syncMolds().then(rMolds)">↻ 새로고침</button></div>';
+    el.innerHTML='<div style="padding:40px;text-align:center;color:#aaa;font-size:14px;">목형 탭을 클릭하면 로드됩니다<br><br><button class="btn btn-sm btn-primary" onclick="syncMolds().then(rMolds)" style="margin-top:8px;">↻ 목형 불러오기</button></div>';
+  return;
   }
   const inW=molds.filter(m=>m.current_location==='창고').length;
   const ext=molds.filter(m=>m.current_location!=='창고'&&m.current_location!=='폐기'&&m.current_location!=='미확인').length;

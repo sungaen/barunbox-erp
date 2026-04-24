@@ -1402,12 +1402,30 @@ function listRenderRows(){
         mHtml+='<span class="badge badge-gray">'+byM[m].length+'건</span>';
         mHtml+='<span style="font-size:12px;color:#888;margin-left:auto;">발주서 '+byM[m].length+'건</span>';
         mHtml+='</div>';
-        mHtml+='<div>'+byM[m].map(o=>listRowHtml(o)).join('')+'</div>';
+        mHtml+='<div>'+'<div style="display:grid;grid-template-columns:2.5fr 1.5fr 0.8fr 0.7fr 0.8fr 1fr auto auto;gap:10px;padding:6px 16px;background:#f0f0ee;border-bottom:1px solid #e8e8e4;font-size:11px;font-weight:600;color:#888;letter-spacing:0.03em;">'
+        +'<div>제품명 / 거래처</div>'
+        +'<div>공정</div>'
+        +'<div>담당자</div>'
+        +'<div>납기일</div>'
+        +'<div>수량</div>'
+        +'<div>비고</div>'
+        +'<div style="min-width:88px;"></div>'
+        +'<div style="min-width:52px;"></div>'
+        +'</div>'+'<div>'+byM[m].map(o=>listRowHtml(o)).join('')+'</div>'+'</div>';
         mHtml+='</div>';
       });
       el.innerHTML=mHtml;
     } else {
-      el.innerHTML='<div class="order-group">'+orders.map(o=>listRowHtml(o)).join('')+'</div>';
+      el.innerHTML='<div class="order-group">'+'<div style="display:grid;grid-template-columns:2.5fr 1.5fr 0.8fr 0.7fr 0.8fr 1fr auto auto;gap:10px;padding:6px 16px;background:#f0f0ee;border-bottom:1px solid #e8e8e4;font-size:11px;font-weight:600;color:#888;letter-spacing:0.03em;">'
+        +'<div>제품명 / 거래처</div>'
+        +'<div>공정</div>'
+        +'<div>담당자</div>'
+        +'<div>납기일</div>'
+        +'<div>수량</div>'
+        +'<div>비고</div>'
+        +'<div style="min-width:88px;"></div>'
+        +'<div style="min-width:52px;"></div>'
+        +'</div>'+'<div>'+orders.map(o=>listRowHtml(o)).join('')+'</div>'+'</div>';
     }
   });
 }

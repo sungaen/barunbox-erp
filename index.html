@@ -933,11 +933,14 @@ async function autoCreateMolds(savedOid, eo, specs, clName, prodName){
   const today=new Date().toISOString().split('T')[0];
   const tproc=(eo.procs||[]).filter(p=>p.type==='thomson');
   const thomsonVendor=tproc.length>0?tproc[0].vendor:'창고';
+  // 톰슨 subType 확인: "신규목형"일 때만 목형 자동 생성
+  const thomsonSubType=tproc.length>0?tproc[0].subType:'';
+  const isNewMold=thomsonSubType==='신규목형';
   const linkedMolds=window._linkedMolds||{};
 
   for(let si=0;si<specs.length;si++){
     const sp=specs[si];
-    // 수동 연결된 목형 → 위치 이동만
+    // 수동 연결된 목형 → 위치 이동만 (subType 무관)
     if(linkedMolds[si]){
       const lm=linkedMolds[si];
       if(lm.current_location!==thomsonVendor){
@@ -947,13 +950,16 @@ async function autoCreateMolds(savedOid, eo, specs, clName, prodName){
       }
       continue;
     }
-    // 칼규격이 없으면 스킵
+    // 신규목형이 아니면 자동 생성 스킵
+    if(!isNewMold)continue;
+    // 칼규격(w, h) 없으면 스킵
     if(!sp.w||!sp.h)continue;
+    // 업체명, 품명 없으면 스킵
+    if(!clName||!prodName)continue;
 
     const moldCount=hasSsabari?2:1;
     for(let mi=0;mi<moldCount;mi++){
       const moldSuffix=moldCount>1?(mi===0?' (표지)':' (이면)'):'';
-      // 품명: 제품명 + 칼규격 제목(있으면)
       const moldTitle=sp.title?prodName+' '+sp.title:prodName;
       const sizeStr=sp.w+'*'+sp.h+(sp.jo&&sp.jo!=='1'?'['+sp.jo+'조]':'');
       const moldData={
@@ -3626,10 +3632,10 @@ const MOLD_PAGE=50;
 const MOLD_LOCS=['창고','그린','정도아트팩','수도인쇄','흥덕문화','아이팩','서경에스지','신원지기','디에이치비','대성씨앤씨','광명패키지','조광피오피','삼성지공','성만사','근영포장','이연인쇄','선일접착','정도','성수표지','업체전달','사무실','폐기'];
 
 async function syncMolds(){
-  // 목형 목록만 먼저 로드 (빠른 초기화)
-  const res=await api('molds','GET',null,'order=id.desc&select=*');
+  // product가 있는 유효한 목형만 로드 (빈 데이터 방어)
+  const res=await api('molds','GET',null,'order=id.desc&select=*&product=not.is.null');
   if(res){
-    molds=res.map(m=>({...m,history:[]}));
+    molds=res.filter(m=>m.product&&m.product.trim()!=='').map(m=>({...m,history:[]}));
     moldFiltered=[...molds];
   }
 }

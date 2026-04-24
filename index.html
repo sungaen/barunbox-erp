@@ -1229,6 +1229,26 @@ function openOrderDetail(oid){
   const o=DB.orders.find(x=>x.id===oid);if(!o)return;
   const comp=COS.find(c=>c.id===o.company)||COS[0];
   const mgr=MGS.find(m=>m.id===o.manager)||MGS[0];
+
+  // 공정 상세 HTML 생성
+  const procDetailHtml=(o.procs||[]).map(p=>{
+    const pm=PM[p.type]||{name:p.type,color:'#888'};
+    const rows=[];
+    if(p.vendor)rows.push(`<span style="color:#888;">업체</span><span>${p.vendor}</span>`);
+    if(p.subType)rows.push(`<span style="color:#888;">구분</span><span>${p.subType}</span>`);
+    if(p.note)rows.push(`<span style="color:#888;">요청</span><span>${p.note}</span>`);
+    if(p.doneDate)rows.push(`<span style="color:#888;">완료일</span><span>${p.doneDate}</span>`);
+    return `<div style="border:1px solid #e8e8e4;border-radius:8px;overflow:hidden;margin-bottom:6px;">
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:${pm.color}11;border-bottom:${rows.length?'1px solid #e8e8e4;':'none'};">
+        <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:${pm.color}22;color:${pm.color};">${pm.name}</span>
+        ${p.vendor?`<span style="font-size:12px;font-weight:500;">${p.vendor}</span>`:''}
+        ${p.subType?`<span style="font-size:11px;color:#888;">${p.subType}</span>`:''}
+        ${p.doneDate?`<span style="font-size:11px;color:#1e7e34;margin-left:auto;">✓ ${p.doneDate}</span>`:''}
+      </div>
+      ${rows.filter(r=>r.includes('요청')||r.includes('완료일')).length?`<div style="display:grid;grid-template-columns:50px 1fr;gap:3px 8px;font-size:12px;padding:7px 12px;">${rows.filter(r=>r.includes('요청')||r.includes('완료일')).join('')}</div>`:''}
+    </div>`;
+  }).join('');
+
   openMod(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
     <span style="font-size:15px;font-weight:600;">${o.productName||o.name}</span>
     <div style="display:flex;gap:6px;">
@@ -1246,6 +1266,7 @@ function openOrderDetail(oid){
         <span style="color:#888;">발주일</span><span>${o.ordered||'-'}</span>
         <span style="color:#888;">납기일</span><span>${o.dd||'-'}</span>
         <span style="color:#888;">상태</span><span><span class="badge ${STATUS_MAP[o.status]||'badge-gray'}">${o.status||'대기'}</span></span>
+        ${o.memo?`<span style="color:#888;">메모</span><span style="color:#555;">${o.memo}</span>`:''}
       </div>
     </div>
     <div class="card" style="margin:0;">
@@ -1256,15 +1277,25 @@ function openOrderDetail(oid){
         <span style="color:#888;">칼규격</span><span>${o.calW||''}*${o.calH||''}[${o.jo||1}조${(o.addons||[]).length?' '+(o.addons||[]).join(' '):''}]</span>
         <span style="color:#888;">지류정매</span><span>${(o.jq||0).toLocaleString()}매</span>
         <span style="color:#888;">납품처</span><span>${o.da||'추후 통보'}</span>
+        <span style="color:#888;">포장</span><span>${o.pk||'-'}</span>
       </div>
     </div>
   </div>
-  <div class="card" style="margin:0;">
+  <div class="card" style="margin:0 0 1rem 0;">
     <div class="sec">공정 흐름</div>
-    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;">
-      ${(o.procs||[]).map((p,i)=>`<span style="font-size:12px;padding:3px 10px;border-radius:12px;background:${PM[p.type].color}22;color:${PM[p.type].color};">${PM[p.type].name} ${p.vendor?'('+p.vendor+')':''}</span>${i<o.procs.length-1?'<span style="color:#aaa;">→</span>':''}`).join('')}
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-bottom:12px;">
+      ${(o.procs||[]).map((p,i)=>`<span style="font-size:12px;padding:3px 10px;border-radius:12px;background:${PM[p.type]?.color||'#888'}22;color:${PM[p.type]?.color||'#888'};">${PM[p.type]?.name||p.type} ${p.vendor?'('+p.vendor+')':''}</span>${i<o.procs.length-1?'<span style="color:#aaa;">→</span>':''}`).join('')}
     </div>
+    <div class="sec" style="margin-top:4px;">공정 상세</div>
+    ${procDetailHtml||'<div style="font-size:12px;color:#aaa;">공정 없음</div>'}
+  </div>
+  <div class="card" style="margin:0;">
+    <div class="sec">첨부파일</div>
+    <div id="detail-files-${oid}"><div style="font-size:12px;color:#aaa;">불러오는 중...</div></div>
   </div>`);
+
+  // 첨부파일 비동기 로드
+  loadAttachedFiles(oid, 'detail-files-'+oid);
 }
 
 /* ══ 2. 발주 목록 탭 ══ */
@@ -4199,16 +4230,33 @@ async function loadAttachedFiles(oid,targetElId){
     if(!res.ok){el.innerHTML='';return;}
     const files=await res.json();
     if(!files||!files.length){el.innerHTML='<div style="font-size:11px;color:#aaa;">첨부파일 없음</div>';return;}
-    el.innerHTML='<div style="font-size:11px;color:#888;font-weight:600;margin-bottom:4px;">첨부파일 ('+files.length+'개)</div>'
-      +files.map(f=>{
+    const imgExts=['jpg','jpeg','png','gif','webp'];
+    const imgs=files.filter(f=>{const ext=(f.name.split('.').pop()||'').toLowerCase();return imgExts.includes(ext);});
+    const others=files.filter(f=>{const ext=(f.name.split('.').pop()||'').toLowerCase();return !imgExts.includes(ext);});
+    let html='<div style="font-size:11px;color:#888;font-weight:600;margin-bottom:8px;">첨부파일 ('+files.length+'개)</div>';
+    if(imgs.length){
+      html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:8px;">';
+      imgs.forEach(f=>{
         const url=SUPA_URL+'/storage/v1/object/public/'+STORAGE_BUCKET+'/'+oid+'/'+f.name;
         const dispName=f.name.replace(/^\d+_/,'');
-        return '<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:#f5f5f3;border-radius:6px;margin-bottom:3px;font-size:12px;">'
-          +'<span>'+fileIcon(f.name)+'</span>'
-          +'<a href="'+url+'" target="_blank" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1a56c4;text-decoration:none;">'+dispName+'</a>'
-          +'<button data-oid="'+oid+'" data-fname="'+f.name+'" data-tid="'+targetElId+'" onclick="delFileBtn(this)" style="color:#c0392b;background:none;border:none;cursor:pointer;font-size:13px;">✕</button>'
+        html+='<div style="position:relative;border:1px solid #e8e8e4;border-radius:8px;overflow:hidden;background:#f5f5f3;">'
+          +'<a href="'+url+'" target="_blank"><img src="'+url+'" alt="'+dispName+'" style="width:100%;height:90px;object-fit:cover;display:block;"/></a>'
+          +'<div style="padding:4px 6px;font-size:10px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+dispName+'</div>'
+          +'<button data-oid="'+oid+'" data-fname="'+f.name+'" data-tid="'+targetElId+'" onclick="delFileBtn(this)" style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;line-height:18px;text-align:center;">✕</button>'
           +'</div>';
-      }).join('');
+      });
+      html+='</div>';
+    }
+    others.forEach(f=>{
+      const url=SUPA_URL+'/storage/v1/object/public/'+STORAGE_BUCKET+'/'+oid+'/'+f.name;
+      const dispName=f.name.replace(/^\d+_/,'');
+      html+='<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:#f5f5f3;border-radius:6px;margin-bottom:4px;font-size:12px;">'
+        +'<span style="font-size:16px;">'+fileIcon(f.name)+'</span>'
+        +'<a href="'+url+'" target="_blank" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1a56c4;text-decoration:none;">'+dispName+'</a>'
+        +'<button data-oid="'+oid+'" data-fname="'+f.name+'" data-tid="'+targetElId+'" onclick="delFileBtn(this)" style="color:#c0392b;background:none;border:none;cursor:pointer;font-size:13px;">✕</button>'
+        +'</div>';
+    });
+    el.innerHTML=html;
   }catch(e){el.innerHTML='';}
 }
 function delFileBtn(btn){deleteOrderFile(btn.dataset.oid,btn.dataset.fname,btn.dataset.tid);}

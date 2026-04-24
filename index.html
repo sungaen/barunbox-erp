@@ -1149,21 +1149,52 @@ async function saveOrder(oid){
   if(!cleanOid){
     await autoCreateMolds(savedOid, _eo, _specsNow, _clNameNow, _prodNameNow);
   } else {
-    // 편집/재발주 시: 연결된 목형 위치 업데이트 + 이동경로 기록
+    // 편집/재발주 시: 목형 위치 업데이트 + 이동경로 기록
     const _tproc2=(_eo.procs||[]).filter(p=>p.type==='thomson');
     const _thomsonV=_tproc2.length>0?_tproc2[0].vendor:'창고';
-    const lm2=window._linkedMolds||{};
+    const today2=new Date().toISOString().split('T')[0];
     const moldMoveNotes=[];
+
+    // 1) 수동 연결된 목형 처리
+    const lm2=window._linkedMolds||{};
+    const manualIds=new Set();
     for(const si in lm2){
       const lm=lm2[si];
-      if(lm&&lm.current_location!==_thomsonV){
+      if(!lm)continue;
+      manualIds.add(lm.id);
+      if(lm.current_location!==_thomsonV){
         const fromLoc=lm.current_location||'미확인';
-        await api('mold_movements','POST',{mold_id:lm.id,location:_thomsonV,moved_date:new Date().toISOString().split('T')[0],reason:'발주연동',order_id:savedOid});
+        await api('mold_movements','POST',{mold_id:lm.id,location:_thomsonV,moved_date:today2,reason:'발주편집',order_id:savedOid});
         await api('molds','PATCH',{current_location:_thomsonV},'id=eq.'+lm.id);
+        const mObj=molds.find(x=>x.id===lm.id);
+        if(mObj)mObj.current_location=_thomsonV;
         moldMoveNotes.push(fromLoc+' → '+_thomsonV);
         toast('🗂 목형 #'+lm.id+' '+fromLoc+' → '+_thomsonV+' 이동');
       }
     }
+
+    // 2) 수동 연결 없을 때: 이 발주의 client+product로 목형 자동 매칭
+    if(manualIds.size===0&&_thomsonV&&_thomsonV!=='창고'){
+      const _clName=DB.clients.find(x=>x.id===(_eo.client_id||_eo.clientId))?.name||_eo.clientName||_eo.client_name||'';
+      const _pName=_eo.productName||_eo.product_name||_eo.name||'';
+      if(_clName&&_pName){
+        const matched=molds.filter(m=>
+          m.client&&_clName&&m.client.includes(_clName)&&
+          m.product&&_pName&&m.product.includes(_pName.slice(0,6))
+        );
+        for(const m of matched){
+          if(m.current_location!==_thomsonV){
+            const fromLoc=m.current_location||'미확인';
+            await api('mold_movements','POST',{mold_id:m.id,location:_thomsonV,moved_date:today2,reason:'발주편집(자동)',order_id:savedOid});
+            await api('molds','PATCH',{current_location:_thomsonV},'id=eq.'+m.id);
+            m.current_location=_thomsonV;
+            moldMoveNotes.push(fromLoc+' → '+_thomsonV);
+            toast('🗂 목형 #'+m.id+' '+fromLoc+' → '+_thomsonV+' 이동(자동)');
+          }
+        }
+      }
+    }
+
     // 이동경로가 있으면 orders에 저장
     if(moldMoveNotes.length>0){
       await api('orders','PATCH',{mold_move_info:moldMoveNotes.join(', ')},'id=eq.'+savedOid);

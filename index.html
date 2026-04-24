@@ -4224,8 +4224,8 @@ async function uploadOrderFile(oid,file){
 async function loadAttachedFiles(oid,targetElId){
   const el=document.getElementById(targetElId);if(!el)return;
   try{
-    const res=await fetch(SUPA_URL+'/storage/v1/object/list/'+STORAGE_BUCKET+'/'+oid,{
-      method:'POST',headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,'Content-Type':'application/json'},body:JSON.stringify({limit:50,offset:0})
+    const res=await fetch(SUPA_URL+'/storage/v1/object/list/'+STORAGE_BUCKET,{
+      method:'POST',headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,'Content-Type':'application/json'},body:JSON.stringify({prefix:oid+'/',limit:50,offset:0})
     });
     if(!res.ok){el.innerHTML='';return;}
     const files=await res.json();

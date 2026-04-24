@@ -1055,13 +1055,13 @@ async function saveOrder(oid){
         if(!rObj3||!rObj3.id){toast('저장 실패');return;}
         await _saveProcs(rObj3.id,o.procs||[],true);
         await autoCreateMolds(rObj3.id, o, _specsNow, _clNameNow, _prodNameNow);
-        toast('✅ 신규 발주로 등록됐어요!');
+        await _uploadPendingFiles(savedOid);toast('✅ 신규 발주로 등록됐어요!');
         closeMod();await syncAll();
       } else if(choice==='overwrite'){
         await api('orders','PATCH',data,'id=eq.'+cleanOid);
         await _saveProcs(cleanOid,o.procs||[],true);
         await autoCreateMolds(cleanOid, o, _specsNow, _clNameNow, _prodNameNow);
-        toast('✅ 발주서가 수정됐어요.');
+        await _uploadPendingFiles(savedOid);toast('✅ 발주서가 수정됐어요.');
         closeMod();await syncAll();
       } else if(choice==='once'){
         // 이번만 재발주 등록 - 신규 ID로 저장
@@ -1072,8 +1072,8 @@ async function saveOrder(oid){
         if(!rObj||!rObj.id){toast('저장 실패');return;}
         await _saveProcs(rObj.id,o.procs||[],true);
         await autoCreateMolds(rObj.id, o, _specsNow, _clNameNow, _prodNameNow);
-        toast('✅ 이번 재발주가 등록됐어요.');
-        closeMod();await syncAll();
+        await _uploadPendingFiles(savedOid);toast('✅ 이번 재발주가 등록됐어요.');
+        await _uploadPendingFiles(savedOid);closeMod();await syncAll();
       } else {
         toast('취소됐어요.');
       }
@@ -1092,12 +1092,12 @@ async function saveOrder(oid){
         if(!rObj3||!rObj3.id){toast('저장 실패');return;}
         await _saveProcs(rObj3.id,o.procs||[],true);
         await autoCreateMolds(rObj3.id, o, _specsNow, _clNameNow, _prodNameNow);
-        toast('✅ 신규 발주로 등록됐어요!');
+        await _uploadPendingFiles(savedOid);toast('✅ 신규 발주로 등록됐어요!');
         closeMod();await syncAll();
       } else if(choice==='overwrite'){
         await api('orders','PATCH',data,'id=eq.'+o._srcId);
         await _saveProcs(o._srcId,o.procs||[],true);
-        toast('✅ 원본 발주서에 덮어썼어요.');
+        await _uploadPendingFiles(savedOid);toast('✅ 원본 발주서에 덮어썼어요.');
         closeMod();await syncAll();
       } else if(choice==='once'){
         const onceData3=Object.assign({},data,{status:'대기',is_reorder:true});
@@ -1107,8 +1107,8 @@ async function saveOrder(oid){
         if(!rObj2||!rObj2.id){toast('저장 실패');return;}
         await _saveProcs(rObj2.id,o.procs||[],true);
         await autoCreateMolds(rObj2.id, o, _specsNow, _clNameNow, _prodNameNow);
-        toast('✅ 이번 재발주가 등록됐어요.');
-        closeMod();await syncAll();
+        await _uploadPendingFiles(savedOid);toast('✅ 이번 재발주가 등록됐어요.');
+        await _uploadPendingFiles(savedOid);closeMod();await syncAll();
       } else {
         toast('취소됐어요.');
       }
@@ -1117,7 +1117,7 @@ async function saveOrder(oid){
       const r=await api('orders','POST',Object.assign({},data,{status:'대기'}));
       if(!r||!r[0]){toast('저장 실패');return;}
       await _saveProcs(r[0].id,o.procs||[],true);
-      toast('✅ 재발주 등록됐어요!');
+      await _uploadPendingFiles(savedOid);toast('✅ 재발주 등록됐어요!');
       closeMod();await syncAll();
     }
     return;
@@ -1201,15 +1201,7 @@ async function saveOrder(oid){
     }
     window._linkedMolds={};
   }
-  // 파일 업로드
-  if(window._pendingFiles&&window._pendingFiles.length>0){
-    toast('파일 업로드 중...');
-    for(const f of window._pendingFiles){
-      await uploadOrderFile(savedOid, f);
-    }
-    window._pendingFiles=[];
-  }
-  toast('저장 완료 ✓');
+  await _uploadPendingFiles(savedOid);toast('저장 완료 ✓');
   closeMod();
   await syncAll();
 }
@@ -4212,6 +4204,14 @@ function renderPendingFiles(){
     +'</div>').join('');
 }
 function removePendingFile(i){if(window._pendingFiles)window._pendingFiles.splice(i,1);renderPendingFiles();}
+async function _uploadPendingFiles(oid){
+  if(!oid||!window._pendingFiles||!window._pendingFiles.length)return;
+  toast('파일 업로드 중...');
+  for(const f of window._pendingFiles){
+    await uploadOrderFile(oid,f);
+  }
+  window._pendingFiles=[];
+}
 async function uploadOrderFile(oid,file){
   try{
     const path=oid+'/'+Date.now()+'_'+file.name.replace(/[^a-zA-Z0-9._-]/g,'_');

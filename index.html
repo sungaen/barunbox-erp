@@ -4235,17 +4235,17 @@ async function loadAttachedFiles(oid,targetElId){
     const others=files.filter(f=>{const ext=(f.name.split('.').pop()||'').toLowerCase();return !imgExts.includes(ext);});
     let html='<div style="font-size:11px;color:#888;font-weight:600;margin-bottom:8px;">첨부파일 ('+files.length+'개)</div>';
     if(imgs.length){
-      html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:8px;">';
       imgs.forEach(f=>{
         const url=SUPA_URL+'/storage/v1/object/public/'+STORAGE_BUCKET+'/'+oid+'/'+f.name;
         const dispName=f.name.replace(/^\d+_/,'');
-        html+='<div style="position:relative;border:1px solid #e8e8e4;border-radius:8px;overflow:hidden;background:#f5f5f3;">'
-          +'<a href="'+url+'" target="_blank"><img src="'+url+'" alt="'+dispName+'" style="width:100%;height:90px;object-fit:cover;display:block;"/></a>'
-          +'<div style="padding:4px 6px;font-size:10px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+dispName+'</div>'
-          +'<button data-oid="'+oid+'" data-fname="'+f.name+'" data-tid="'+targetElId+'" onclick="delFileBtn(this)" style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;line-height:18px;text-align:center;">✕</button>'
+        html+='<div style="position:relative;border:1px solid #e8e8e4;border-radius:10px;overflow:hidden;background:#000;margin-bottom:10px;">'
+          +'<a href="'+url+'" target="_blank"><img src="'+url+'" alt="'+dispName+'" style="width:100%;max-height:600px;object-fit:contain;display:block;"/></a>'
+          +'<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:#f5f5f3;border-top:1px solid #e8e8e4;">'
+          +'<span style="font-size:11px;color:#555;">'+dispName+'</span>'
+          +'<button data-oid="'+oid+'" data-fname="'+f.name+'" data-tid="'+targetElId+'" onclick="delFileBtn(this)" style="color:#c0392b;background:none;border:none;cursor:pointer;font-size:12px;padding:0 4px;">✕ 삭제</button>'
+          +'</div>'
           +'</div>';
       });
-      html+='</div>';
     }
     others.forEach(f=>{
       const url=SUPA_URL+'/storage/v1/object/public/'+STORAGE_BUCKET+'/'+oid+'/'+f.name;

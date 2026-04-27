@@ -232,7 +232,14 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
   #top-btn { display: flex !important; }   /* 발주등록 버튼만 표시 */
   .d-pipe-grid { grid-template-columns: repeat(3, 1fr) !important; }
 }
-@media print{header,#top-bar,.btn{display:none!important;}.ws-out{border:none!important;max-width:100%!important;}}
+@media print{
+  header,#top-bar,.btn,#mod-overlay>div>div:first-child{display:none!important;}
+  .ws-out{border:none!important;max-width:100%!important;}
+  #mod-overlay{position:static!important;background:none!important;padding:0!important;}
+  #mod-overlay>div{box-shadow:none!important;border-radius:0!important;padding:0!important;max-height:none!important;overflow:visible!important;}
+  .print-file-page{page-break-before:always;margin:0;padding:0;}
+  .print-file-page img,.print-file-page embed{width:100%!important;}
+}
 @keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
 
 /* ══ 생산현황판 CSS ══ */
@@ -401,6 +408,8 @@ const MGS=[
   {id:'m4',name:'이철행',title:'실장',tel:'010-9252-7244'},
 ];
 const PM={
+  design:{name:'디자인',color:'#7C3AED',cls:'td'},
+  mold:{name:'목형',color:'#92400E',cls:'tm'},
   jiryu:{name:'지류',color:'#1D9E75',cls:'tj'},
   print:{name:'인쇄',color:'#378ADD',cls:'tp'},
   coating:{name:'코팅',color:'#EF9F27',cls:'tc'},
@@ -607,7 +616,7 @@ function openOrderForm(oid){
     o=window._editOrder;
     window._editOrder=null;
   } else {
-    o={id:null,clientName:'',client_id:null,company:'c1',manager:'m1',name:'',productName:'',size:'',qty:0,calW:'',calH:'',jo:'1',addons:[],jq:0,ja:true,js:'',dd:'',da:'',pk:'박스포장',ordered:new Date().toISOString().split('T')[0],status:'대기',memo:'',procs:[]};
+    o={id:null,clientName:'',client_id:null,company:'c1',manager:'m1',name:'',productName:'',size:'',qty:0,calW:'',calH:'',jo:'1',addons:[],jq:0,ja:true,js:'',dd:'',da:'',pk:'박스포장',ordered:new Date().toISOString().split('T')[0],status:'대기',memo:'',procs:[{type:'design',vendor:'',note:'',doneDate:''},{type:'mold',vendor:'',subType:'신규목형',note:'',doneDate:''}]};
   }
   if(!o)return;
   const comp=COS.find(c=>c.id===o.company)||COS[0];
@@ -732,7 +741,7 @@ function openOrderForm(oid){
               +'<span style="font-size:11px;color:#888;width:42px;flex-shrink:0;">칼규격</span>'
               +'<input class="cal-w" style="width:60px;" value="'+(s.w||'')+'" placeholder="958" oninput="syncCalMain();recalcJq('+i+')"/>'
               +'<span style="color:#888;">×</span>'
-              +'<input class="cal-h" style="width:60px;" value="'+(s.h||'')+'" placeholder="687"/>'
+              +'<input class="cal-h" style="width:60px;" value="'+(s.h||'')+'" placeholder="687" oninput="syncCalMain()"/>'
               +'<span style="font-size:12px;color:#888;">[</span>'
               +'<select class="cal-jo" style="width:68px;" onchange="recalcJq('+i+')">'+joOpts+'</select>'
               +'<span style="font-size:12px;color:#888;">]</span>'
@@ -995,6 +1004,8 @@ async function _saveProcs(orderId, procs, resetDone){
 }
 
 async function saveOrder(oid){
+  // 저장 전 목형 공정 카드 코멘트 수집
+  collectMoldNotes();
   const o=getEO();
   const clId=document.getElementById('eq-cl')?.value;
   const cl=DB.clients.find(x=>x.id===clId);
@@ -2936,7 +2947,45 @@ function openPrint(oid){
       })()}
     </div>
     <div class="wf"><span>${comp.name} · ${comp.addr}</span><span>TEL ${comp.tel} / FAX ${comp.fax}</span></div>
-  </div>`);
+  </div>
+  <div id="print-attachments"></div>`);
+  // 첨부파일 비동기 로드 후 출력 영역에 삽입
+  loadPrintAttachments('${oid}');
+}
+
+async function loadPrintAttachments(oid){
+  const el=document.getElementById('print-attachments');
+  if(!el)return;
+  try{
+    const res=await fetch(SUPA_URL+'/storage/v1/object/list/'+STORAGE_BUCKET,{
+      method:'POST',
+      headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({prefix:oid+'/',limit:50,offset:0})
+    });
+    const files=await res.json();
+    if(!Array.isArray(files)||!files.length){el.innerHTML='';return;}
+    const imgExts=['jpg','jpeg','png','gif','webp'];
+    let html='';
+    files.forEach(f=>{
+      const url=SUPA_URL+'/storage/v1/object/public/'+STORAGE_BUCKET+'/'+oid+'/'+f.name;
+      const dispName=f.name.replace(/^\d+_/,'');
+      const ext=(f.name.split('.').pop()||'').toLowerCase();
+      const isImg=imgExts.includes(ext);
+      const isPdf=ext==='pdf';
+      if(isImg){
+        html+='<div class="print-file-page" style="page-break-before:always;">'
+          +'<div style="font-size:11px;color:#888;margin-bottom:8px;padding:8px 12px;background:#f5f5f3;border-bottom:1px solid #e8e8e4;">📎 첨부파일: '+dispName+'</div>'
+          +'<img src="'+url+'" style="width:100%;max-height:90vh;object-fit:contain;display:block;background:#000;" />'
+          +'</div>';
+      } else if(isPdf){
+        html+='<div class="print-file-page" style="page-break-before:always;">'
+          +'<div style="font-size:11px;color:#888;margin-bottom:8px;padding:8px 12px;background:#f5f5f3;border-bottom:1px solid #e8e8e4;">📎 첨부파일: '+dispName+'</div>'
+          +'<embed src="'+url+'" type="application/pdf" style="width:100%;height:90vh;display:block;" />'
+          +'</div>';
+      }
+    });
+    el.innerHTML=html;
+  }catch(e){el.innerHTML='';}
 }
 
 /* ══ 공정 빌더 ══ */
@@ -2956,6 +3005,7 @@ function rProcs(){
     div.innerHTML=bPC(p,i);list.appendChild(div);
   });
   rFB();
+  setTimeout(syncMoldSpecs,100);
 }
 function bPC(p,i){
   const m=PM[p.type]||{name:p.type,color:'#888',cls:'tt'};
@@ -2999,8 +3049,8 @@ function rFld(p,i){
 }
 function bGB(p,i){
   const vl=gv(p.type);
-  const SM={coating:['무광라미','유광라미','써멀무광','써멀유광','UV코팅'],foil:['유광금박','무광금박','유광은박','무광은박','홀로그램','별색박'],hapji:['양면합지','단면합지'],thomson:['신규목형','기존목형','목형 수정'],ssabari:['2단싸바리','3단싸바리','표지바리'],delivery:['자차','용차','택배(로젠)','택배(CJ)','직접수령'],carton:['단면골판지','양면골판지','이중양면골판지','삼중골판지'],material:['PP끈','철심','테이프','에어캡','수축필름','부자재 기타'],pyoji:['2단표지','3단표지','커스텀']};
-  const SL={coating:'코팅 종류',foil:'박 종류',hapji:'합지 방식',thomson:'목형 여부',ssabari:'싸바리 종류',delivery:'배송 방법',carton:'카톤 종류',material:'부자재 종류',pyoji:'표지 종류'};
+  const SM={design:['AI작업','인디자인작업','수정작업','시안작업'],mold:['신규목형','기존목형','목형 수정'],coating:['무광라미','유광라미','써멀무광','써멀유광','UV코팅'],foil:['유광금박','무광금박','유광은박','무광은박','홀로그램','별색박'],hapji:['양면합지','단면합지'],thomson:['신규목형','기존목형','목형 수정'],ssabari:['2단싸바리','3단싸바리','표지바리'],delivery:['자차','용차','택배(로젠)','택배(CJ)','직접수령'],carton:['단면골판지','양면골판지','이중양면골판지','삼중골판지'],material:['PP끈','철심','테이프','에어캡','수축필름','부자재 기타'],pyoji:['2단표지','3단표지','커스텀']};
+  const SL={design:'작업 종류',mold:'목형 여부',coating:'코팅 종류',foil:'박 종류',hapji:'합지 방식',thomson:'목형 여부',ssabari:'싸바리 종류',delivery:'배송 방법',carton:'카톤 종류',material:'부자재 종류',pyoji:'표지 종류'};
   let sub='';
   if(SM[p.type]){const sl=SM[p.type];
     // 기존 저장된 값이 목록에 없으면 직접입력 모드로 자동 전환
@@ -3011,7 +3061,8 @@ function bGB(p,i){
       <option value="__d__" ${sd?'selected':''}>직접 입력...</option></select>
       ${!sd?`<button type="button" onclick="onST(${i},'__d__')" style="font-size:10px;padding:1px 7px;border:1px solid #d0d0cc;border-radius:4px;background:#fff;color:#888;cursor:pointer;margin-top:3px;">✏ 직접 입력</button>`:''}
       ${sd?`<div class="dw"><input value="${p.subType||''}" placeholder="직접 입력" oninput="onSTDirect(${i},this.value)" id="st-direct-${i}"/></div>`:''}</div>`;}
-  return `<div class="g2" style="margin-bottom:8px;">${vSel(p,i,vl)}
+  const moldBadgeHtml=p.type==='mold'?`<div class="mold-spec-badge" style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px;padding:8px;background:#fffbf0;border:1px solid #92400E33;border-radius:8px;"><span style="font-size:11px;color:#aaa;">칼규격 입력 시 자동 표시</span></div>`:'';
+  return `${moldBadgeHtml}<div class="g2" style="margin-bottom:8px;">${vSel(p,i,vl)}
     <div><label>완료요청일 <span style="color:#aaa;">(선택)</span></label>
       <input type="date" value="${p.doneDate||''}" onchange="sP(${i},'doneDate',this.value)"/></div></div>
     ${sub}<div class="g2">
@@ -3461,6 +3512,76 @@ function syncCalMain(){
   const ch=document.getElementById('eq-ch');
   if(cw&&first)cw.value=first.value;
   if(ch&&firstH)ch.value=firstH.value;
+  syncMoldSpecs();
+}
+
+function syncMoldSpecs(){
+  // 칼규격 행들 수집
+  const rows=document.querySelectorAll('.cal-row-item');
+  const specs=[];
+  rows.forEach(function(row,i){
+    const w=row.querySelector('.cal-w')?.value||'';
+    const h=row.querySelector('.cal-h')?.value||'';
+    const jo=(row.querySelector('.cal-jo')?.value||'1조').replace('조','');
+    const title=row.querySelector('.cal-title')?.value||'';
+    specs.push({w,h,jo,title,idx:i});
+  });
+  // 목형 공정 행들 찾아서 개별 카드로 업데이트
+  const procItems=document.querySelectorAll('.pc');
+  procItems.forEach(function(pc){
+    const moldBadge=pc.querySelector('.mold-spec-badge');
+    if(!moldBadge)return;
+    if(specs.length===0){
+      moldBadge.innerHTML='<span style="font-size:11px;color:#aaa;">칼규격 입력 시 자동 표시</span>';
+      return;
+    }
+    // 기존 카드에서 저장된 코멘트 백업
+    const saved={};
+    moldBadge.querySelectorAll('.mold-spec-card').forEach(function(card){
+      const idx=card.dataset.specIdx;
+      const note=card.querySelector('.mold-spec-note')?.value||'';
+      if(note) saved[idx]=note;
+    });
+    // 카드 재생성
+    const html=specs.map(function(s,i){
+      const label=s.title?s.title:(i===0?'규격 1':'규격 '+(i+1));
+      const spec=(s.w&&s.h)?s.w+'×'+s.h+' ['+s.jo+'조]':'규격 미입력';
+      const savedNote=saved[String(i)]||'';
+      return '<div class="mold-spec-card" data-spec-idx="'+i+'" style="border:1px solid #92400E33;border-radius:8px;padding:8px 10px;margin-bottom:6px;background:#fff;">'
+        +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
+        +'<span style="background:#92400E;color:#fff;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:700;">📐 '+label+'</span>'
+        +'<span style="font-size:12px;color:#555;font-weight:500;">'+spec+'</span>'
+        +'</div>'
+        +'<div><label style="font-size:11px;color:#888;display:block;margin-bottom:3px;">목형 코멘트</label>'
+        +'<input class="mold-spec-note" placeholder="목형 요청사항 (예: 신규목형, 칼선 수정 등)" value="'+savedNote+'" style="width:100%;font-size:12px;"/>'
+        +'</div>'
+        +'</div>';
+    }).join('');
+    moldBadge.innerHTML=html;
+  });
+}
+
+function collectMoldNotes(){
+  // 목형 공정 카드에서 코멘트 수집 → o.procs의 mold 공정 note에 반영
+  const o=getEO();
+  if(!o||!o.procs)return;
+  const moldProcs=o.procs.filter(function(p){return p.type==='mold';});
+  if(!moldProcs.length)return;
+  // 모든 목형 공정 행에서 카드 수집
+  const allCards=document.querySelectorAll('.mold-spec-card');
+  if(!allCards.length)return;
+  // 카드가 1개면 note에 바로, 여러개면 "제목: 코멘트" 형태로 합치기
+  const notes=[];
+  allCards.forEach(function(card){
+    const specIdx=parseInt(card.dataset.specIdx)||0;
+    const note=card.querySelector('.mold-spec-note')?.value||'';
+    const calRows=document.querySelectorAll('.cal-row-item');
+    const calRow=calRows[specIdx];
+    const title=calRow?.querySelector('.cal-title')?.value||('규격 '+(specIdx+1));
+    if(note) notes.push(title+': '+note);
+  });
+  // 목형 공정 첫번째에 합쳐서 저장
+  if(moldProcs[0]) moldProcs[0].note=notes.join(' / ');
 }
 
 function recalcAllJq(){
@@ -3501,9 +3622,9 @@ function resetJqRow(i){
   toast('자동 계산으로 리셋됐어요');
 }
 function syncJiryuTitle(i,v){
-  // 제목 입력 시 저장용 (목형 생성 시 사용)
+  syncMoldSpecs();
 }
-function removeCalRowEl(btn){const row=btn.closest('.cal-row-item');if(row)row.remove();}
+function removeCalRowEl(btn){const row=btn.closest('.cal-row-item');if(row)row.remove();syncMoldSpecs();}
 
 function addCalRow(){
   const wrap=document.getElementById('cal-rows');if(!wrap)return;
@@ -3524,7 +3645,7 @@ function addCalRow(){
     +'<span style="font-size:11px;color:#888;width:42px;flex-shrink:0;">칼규격</span>'
     +'<input class="cal-w" style="width:60px;" placeholder="958" oninput="syncCalMain();recalcJq('+i+')"/>'
     +'<span style="color:#888;">×</span>'
-    +'<input class="cal-h" style="width:60px;" placeholder="687"/>'
+    +'<input class="cal-h" style="width:60px;" placeholder="687" oninput="syncCalMain()"/>'
     +'<span style="font-size:12px;color:#888;">[</span>'
     +'<select class="cal-jo" style="width:68px;" onchange="recalcJq('+i+')">'+joOpts+'</select>'
     +'<span style="font-size:12px;color:#888;">]</span>'
@@ -3553,6 +3674,7 @@ function addCalRow(){
     +'<div id="mold-linked-'+i+'" style="margin-top:4px;font-size:11px;"></div>';
   wrap.appendChild(row);
   recalcJq(i);
+  setTimeout(syncMoldSpecs,50);
 }
 function removeCalRow(i){const el=document.getElementById('calrow-'+i);if(el)el.remove();}
 
@@ -4247,7 +4369,25 @@ async function loadAttachedFiles(oid,targetElId){
           +'</div>';
       });
     }
-    others.forEach(f=>{
+    const pdfExts=['pdf'];
+    const pdfFiles=others.filter(f=>(f.name.split('.').pop()||'').toLowerCase()==='pdf');
+    const nonPdfFiles=others.filter(f=>(f.name.split('.').pop()||'').toLowerCase()!=='pdf');
+    // PDF: 전체 너비 embed 미리보기
+    pdfFiles.forEach(f=>{
+      const url=SUPA_URL+'/storage/v1/object/public/'+STORAGE_BUCKET+'/'+oid+'/'+f.name;
+      const dispName=f.name.replace(/^\d+_/,'');
+      html+='<div style="border:1px solid #e8e8e4;border-radius:10px;overflow:hidden;margin-bottom:10px;">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:#f5f5f3;border-bottom:1px solid #e8e8e4;">'
+        +'<span style="font-size:11px;color:#555;">📄 '+dispName+'</span>'
+        +'<div style="display:flex;gap:6px;align-items:center;">'
+        +'<a href="'+url+'" target="_blank" style="font-size:11px;color:#1a56c4;">새 탭에서 열기 ↗</a>'
+        +'<button data-oid="'+oid+'" data-fname="'+f.name+'" data-tid="'+targetElId+'" onclick="delFileBtn(this)" style="color:#c0392b;background:none;border:none;cursor:pointer;font-size:12px;">✕ 삭제</button>'
+        +'</div></div>'
+        +'<embed src="'+url+'" type="application/pdf" style="width:100%;height:500px;display:block;" />'
+        +'</div>';
+    });
+    // 나머지 파일 (AI 등) 링크만
+    nonPdfFiles.forEach(f=>{
       const url=SUPA_URL+'/storage/v1/object/public/'+STORAGE_BUCKET+'/'+oid+'/'+f.name;
       const dispName=f.name.replace(/^\d+_/,'');
       html+='<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:#f5f5f3;border-radius:6px;margin-bottom:4px;font-size:12px;">'

@@ -2950,7 +2950,7 @@ function openPrint(oid){
   </div>
   <div id="print-attachments"></div>`);
   // 첨부파일 비동기 로드 후 출력 영역에 삽입
-  loadPrintAttachments('${oid}');
+  loadPrintAttachments(oid);
 }
 
 async function loadPrintAttachments(oid){

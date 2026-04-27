@@ -699,8 +699,8 @@ function openOrderForm(oid){
   if(oid){
     window._editOrder=null; // 편집 시 _editOrder 초기화
     o=DB.orders.find(x=>x.id===oid);
-  } else if(window._editOrder&&window._editOrder.is_reorder){
-    // 재발주만: is_reorder 플래그 확인
+  } else if(window._editOrder){
+    // AI 자동입력 또는 재발주: _editOrder 사용
     o=window._editOrder;
     window._editOrder=null;
   } else {

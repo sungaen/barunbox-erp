@@ -233,13 +233,14 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
   .d-pipe-grid { grid-template-columns: repeat(3, 1fr) !important; }
 }
 @media print{
-  header,#top-bar,.btn,#mod-overlay>div>div:first-child{display:none!important;}
-  .ws-out{border:none!important;max-width:100%!important;}
-  #mod-overlay{position:static!important;background:none!important;padding:0!important;}
-  #mod-overlay>div{box-shadow:none!important;border-radius:0!important;padding:0!important;max-height:none!important;overflow:visible!important;}
-  .print-file-page{page-break-before:always;margin:0;padding:0;}
-  .print-file-page img,.print-file-page embed{width:100%!important;}
+  body > *:not(#_print_area) { display:none !important; }
+  #_print_area { display:block !important; }
+  #_print_area .ws-out { border:none !important; max-width:100% !important; }
+  .print-file-page { page-break-before:always; margin:0; padding:0; }
+  .print-file-page img, .print-file-page embed { width:100% !important; }
+  .file-label { font-size:11px; color:#888; padding:8px 12px; background:#f5f5f3; }
 }
+#_print_area { display:none; }
 @keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
 
 /* ══ 생산현황판 CSS ══ */
@@ -667,7 +668,10 @@ function openOrderForm(oid){
         </label>
         <input type="file" id="eq-files" multiple accept=".pdf,.ai,.png,.jpg,.jpeg,.psd,.eps,.svg,.zip" style="display:none;" onchange="onFilesSelected(this)"/>
         <div id="eq-file-list" style="margin-top:6px;"></div>
-        ${oid ? `<div id="eq-attached-files" style="margin-top:6px;"></div>` : ''}
+        ${oid ? `<div style="margin-top:10px;">
+          <div style="font-size:11px;color:#888;font-weight:600;margin-bottom:4px;">📎 저장된 파일</div>
+          <div id="eq-attached-files"><div style="font-size:11px;color:#aaa;">불러오는 중...</div></div>
+        </div>` : ''}
       </div>
     </div>
 
@@ -870,6 +874,13 @@ function openOrderForm(oid){
   }
   window._linkedMolds={};
   rProcs();
+  // 편집 시 기존 첨부파일 로드
+  if(oid){
+    setTimeout(function(){
+      const el=document.getElementById('eq-attached-files');
+      if(el) loadAttachedFiles(oid,'eq-attached-files');
+    },200);
+  }
 }
 
 function getEO(){return window._editOrder||{};}
@@ -2868,7 +2879,7 @@ function openPrint(oid){
   openMod(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
     <span style="font-size:14px;font-weight:600;">작업 요청서 미리보기</span>
     <div style="display:flex;gap:6px;">
-      <button class="btn btn-sm btn-primary" onclick="window.print()">인쇄 / PDF 저장</button>
+      <button class="btn btn-sm btn-primary" onclick="printOrder()">인쇄 / PDF 저장</button>
       <button class="btn btn-sm" onclick="openOrderEdit('${oid}')">← 편집</button>
       <button class="btn btn-sm" onclick="closeMod()">닫기</button>
     </div></div>
@@ -2952,6 +2963,30 @@ function openPrint(oid){
   // 첨부파일 비동기 로드 후 출력 영역에 삽입
   loadPrintAttachments(oid);
 }
+
+function printOrder(){
+  // 인쇄 전용 div 생성
+  const wsOut = document.querySelector('.ws-out');
+  const attachEl = document.getElementById('print-attachments');
+  if(!wsOut) return;
+
+  // 기존 인쇄 전용 div 제거
+  const old = document.getElementById('_print_area');
+  if(old) old.remove();
+
+  // 인쇄 전용 영역 body에 추가
+  const div = document.createElement('div');
+  div.id = '_print_area';
+  div.innerHTML = wsOut.outerHTML + (attachEl ? attachEl.innerHTML : '');
+  document.body.appendChild(div);
+
+  // 인쇄 실행
+  window.print();
+
+  // 인쇄 후 제거
+  setTimeout(function(){ const el=document.getElementById('_print_area'); if(el)el.remove(); }, 2000);
+}
+
 
 async function loadPrintAttachments(oid){
   const el=document.getElementById('print-attachments');

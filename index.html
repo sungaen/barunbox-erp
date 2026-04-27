@@ -2619,8 +2619,9 @@ function rProductStock(){
           '<div style="text-align:center;font-weight:700;color:'+(curStock!==null&&curStock<10?'#ef4444':'#1a1a1a')+';">'+(curStock!==null?curStock.toLocaleString():'-')+'</div>'+
           '<div style="text-align:center;color:#555;">'+(o.qty||0).toLocaleString()+'</div>'+
           '<div style="display:flex;gap:4px;">'+
-          (initStock===null?'<button class="btn btn-sm btn-primary" style="font-size:11px;" onclick="openInitStock(''+o.id+'',''+( o.productName||o.name||'')+'','+( o.qty||0)+')">기초재고 입력</button>':
-          '<button class="btn btn-sm" style="font-size:11px;" onclick="openProductStockHistory(''+o.id+'')" >이력</button>')+
+          (initStock===null?
+          '<button class="btn btn-sm btn-primary" style="font-size:11px;" onclick="openInitStockById(this)" data-oid="'+o.id+'" data-qty="'+(o.qty||0)+'">기초재고 입력</button>':
+          '<button class="btn btn-sm" style="font-size:11px;" onclick="openProductStockHistoryById(this)" data-oid="'+o.id+'">이력</button>')+
           '</div>'+
         '</div>';
       }).join('')}
@@ -2628,6 +2629,15 @@ function rProductStock(){
   }`;
 }
 
+function openInitStockById(btn){
+  const orderId=btn.dataset.oid;
+  const productName=btn.dataset.name||'';
+  const orderQty=parseInt(btn.dataset.qty)||0;
+  openInitStock(orderId, productName, orderQty);
+}
+function openProductStockHistoryById(btn){
+  openProductStockHistory(btn.dataset.oid);
+}
 async function openInitStock(orderId, productName, orderQty){
   const today=new Date().toISOString().split('T')[0];
   openMod(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">

@@ -237,8 +237,16 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
   #_print_area { display:block !important; }
   #_print_area .ws-out { border:none !important; max-width:100% !important; }
   .print-file-page { page-break-before:always; margin:0; padding:0; }
-  .print-file-page img, .print-file-page embed { width:100% !important; }
-  .file-label { font-size:11px; color:#888; padding:8px 12px; background:#f5f5f3; }
+  .print-file-page img {
+    width:100% !important;
+    max-height:none !important;
+    display:block !important;
+    -webkit-print-color-adjust:exact !important;
+    print-color-adjust:exact !important;
+  }
+  .print-file-page embed { width:100% !important; height:90vh !important; }
+  .file-label { font-size:11px; color:#888; padding:8px 12px; background:#f5f5f3 !important; -webkit-print-color-adjust:exact; }
+  img { -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
 }
 #_print_area { display:none; }
 @keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
@@ -2965,26 +2973,33 @@ function openPrint(oid){
 }
 
 function printOrder(){
-  // 인쇄 전용 div 생성
   const wsOut = document.querySelector('.ws-out');
   const attachEl = document.getElementById('print-attachments');
   if(!wsOut) return;
 
-  // 기존 인쇄 전용 div 제거
+  // 기존 인쇄 영역 제거
   const old = document.getElementById('_print_area');
   if(old) old.remove();
 
-  // 인쇄 전용 영역 body에 추가
+  // 인쇄 전용 영역 생성
   const div = document.createElement('div');
   div.id = '_print_area';
   div.innerHTML = wsOut.outerHTML + (attachEl ? attachEl.innerHTML : '');
   document.body.appendChild(div);
 
-  // 인쇄 실행
-  window.print();
+  // 모달 완전히 숨기기
+  if(MOD) MOD.style.display='none';
 
-  // 인쇄 후 제거
-  setTimeout(function(){ const el=document.getElementById('_print_area'); if(el)el.remove(); }, 2000);
+  // 인쇄 실행
+  setTimeout(function(){
+    window.print();
+    // 인쇄 후 복원
+    setTimeout(function(){
+      if(MOD) MOD.style.display='flex';
+      const el=document.getElementById('_print_area');
+      if(el) el.remove();
+    }, 500);
+  }, 100);
 }
 
 
@@ -3000,25 +3015,40 @@ async function loadPrintAttachments(oid){
     const files=await res.json();
     if(!Array.isArray(files)||!files.length){el.innerHTML='';return;}
     const imgExts=['jpg','jpeg','png','gif','webp'];
+    el.innerHTML='<div style="font-size:11px;color:#aaa;padding:8px;">첨부파일 로딩 중...</div>';
     let html='';
-    files.forEach(f=>{
+    for(const f of files){
       const url=SUPA_URL+'/storage/v1/object/public/'+STORAGE_BUCKET+'/'+oid+'/'+f.name;
       const dispName=f.name.replace(/^\d+_/,'');
       const ext=(f.name.split('.').pop()||'').toLowerCase();
       const isImg=imgExts.includes(ext);
       const isPdf=ext==='pdf';
       if(isImg){
-        html+='<div class="print-file-page" style="page-break-before:always;">'
-          +'<div style="font-size:11px;color:#888;margin-bottom:8px;padding:8px 12px;background:#f5f5f3;border-bottom:1px solid #e8e8e4;">📎 첨부파일: '+dispName+'</div>'
-          +'<img src="'+url+'" style="width:100%;max-height:90vh;object-fit:contain;display:block;background:#000;" />'
-          +'</div>';
+        // 이미지를 fetch해서 base64로 변환 (인쇄 시 정상 출력)
+        try{
+          const imgRes=await fetch(url);
+          const blob=await imgRes.blob();
+          const b64=await new Promise(resolve=>{
+            const reader=new FileReader();
+            reader.onload=()=>resolve(reader.result);
+            reader.readAsDataURL(blob);
+          });
+          html+='<div class="print-file-page" style="page-break-before:always;">'
+            +'<div style="font-size:11px;color:#888;padding:8px 12px;background:#f5f5f3;border-bottom:1px solid #e8e8e4;">📎 '+dispName+'</div>'
+            +'<img src="'+b64+'" style="width:100%;display:block;" />'
+            +'</div>';
+        }catch(e){
+          html+='<div class="print-file-page" style="page-break-before:always;">'
+            +'<div style="font-size:11px;color:#888;padding:8px 12px;background:#f5f5f3;">📎 '+dispName+' (로드 실패)</div>'
+            +'</div>';
+        }
       } else if(isPdf){
         html+='<div class="print-file-page" style="page-break-before:always;">'
-          +'<div style="font-size:11px;color:#888;margin-bottom:8px;padding:8px 12px;background:#f5f5f3;border-bottom:1px solid #e8e8e4;">📎 첨부파일: '+dispName+'</div>'
+          +'<div style="font-size:11px;color:#888;padding:8px 12px;background:#f5f5f3;border-bottom:1px solid #e8e8e4;">📎 '+dispName+'</div>'
           +'<embed src="'+url+'" type="application/pdf" style="width:100%;height:90vh;display:block;" />'
           +'</div>';
       }
-    });
+    }
     el.innerHTML=html;
   }catch(e){el.innerHTML='';}
 }

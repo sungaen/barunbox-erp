@@ -549,6 +549,7 @@ function rOrders(){
   h+='<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center;">';
   h+='<button class="btn btn-primary" onclick="openOrderForm()">+ 신규 발주 등록</button>';
   h+='<button class="btn" onclick="openReorderModal()">↻ 재발주</button>';
+  h+='<label class="btn" style="cursor:pointer;background:#7C3AED;color:#fff;border-color:#7C3AED;" title="PDF 발주서 업로드 → AI 자동 입력">🤖 AI 자동입력<input type="file" accept=".pdf" style="display:none;" onchange="importOrderFromPDF(this)"/></label>';
   h+='</div>';
   h+='<div style="background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:12px 16px;margin-bottom:10px;">';
   h+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
@@ -614,6 +615,105 @@ function orderRowHTML(o){
 }
 
 /* ══ 발주서 폼 (신규/편집 통합) ══ */
+async function importOrderFromPDF(input){
+  const file=input.files[0];
+  if(!file)return;
+  input.value='';
+  toast('🤖 AI가 발주서를 분석 중입니다...');
+
+  // PDF → base64 변환
+  const b64=await new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(reader.result.split(',')[1]);
+    reader.onerror=reject;
+    reader.readAsDataURL(file);
+  });
+
+  try{
+    const response=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:2000,
+        messages:[{
+          role:'user',
+          content:[
+            {type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}},
+            {type:'text',text:`이 작업요청서 PDF에서 발주 정보를 추출해서 반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트 없이 JSON만:
+{
+  "clientName": "거래처명",
+  "productName": "제품명",
+  "size": "제품사이즈",
+  "qty": 수량(숫자),
+  "calW": "칼규격 가로(숫자만)",
+  "calH": "칼규격 세로(숫자만)",
+  "jo": "조수(숫자만, 없으면 1)",
+  "dd": "납기일(YYYY-MM-DD형식, 연도 2자리면 20XX로)",
+  "da": "납품처",
+  "memo": "비고 또는 특이사항",
+  "procs": [
+    {"type": "jiryu|print|coating|foil|hapji|thomson|ssabari|assembly|carton|delivery", "vendor": "업체명", "note": "요청사항", "subType": "서브타입(해당시)"}
+  ]
+}
+공정 type 매핑: 지류=jiryu, 인쇄=print, 코팅=coating, 금박/은박=foil, 합지=hapji, 톰슨=thomson, 싸바리=ssabari, 조립=assembly, 카톤=carton, 배송=delivery
+subType 매핑: 톰슨이면 신규목형/기존목형/목형 수정 중 하나, 코팅이면 무광라미/유광라미/써멀무광/써멀유광/UV코팅 중 하나`}
+          ]
+        }]
+      })
+    });
+
+    const data=await response.json();
+    const text=data.content?.[0]?.text||'';
+    const clean=text.replace(/\`\`\`json|\`\`\`/g,'').trim();
+    const parsed=JSON.parse(clean);
+
+    // 파싱된 데이터로 발주 등록 폼 열기
+    const today=new Date().toISOString().split('T')[0];
+    window._editOrder={
+      id:null,
+      clientName:parsed.clientName||'',
+      client_id:null,
+      company:'c1',
+      manager:'m1',
+      productName:parsed.productName||'',
+      name:parsed.productName||'',
+      size:parsed.size||'',
+      qty:parsed.qty||0,
+      calW:parsed.calW||'',
+      calH:parsed.calH||'',
+      jo:parsed.jo||'1',
+      addons:[],
+      jq:0,
+      ja:true,
+      js:'',
+      dd:parsed.dd||'',
+      da:parsed.da||'',
+      pk:'박스포장',
+      ordered:today,
+      status:'대기',
+      memo:parsed.memo||'',
+      procs:parsed.procs||[]
+    };
+
+    // 거래처 자동 매칭
+    if(parsed.clientName){
+      const matched=DB.clients.find(c=>c.name&&c.name.includes(parsed.clientName.replace('주식회사','').replace('(주)','').trim()));
+      if(matched){
+        window._editOrder.client_id=matched.id;
+        window._editOrder.clientName=matched.name;
+      }
+    }
+
+    toast('✅ AI 분석 완료! 발주 정보를 확인해주세요.');
+    openOrderForm(null);
+
+  }catch(e){
+    console.error('AI 분석 오류:',e);
+    toast('❌ AI 분석 실패: '+e.message);
+  }
+}
+
 function openOrderForm(oid){
   curOid=oid||null;
   let o;

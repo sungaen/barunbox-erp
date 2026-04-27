@@ -630,43 +630,22 @@ async function importOrderFromPDF(input){
   });
 
   try{
-    const response=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:2000,
-        messages:[{
-          role:'user',
-          content:[
-            {type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}},
-            {type:'text',text:`이 작업요청서 PDF에서 발주 정보를 추출해서 반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트 없이 JSON만:
-{
-  "clientName": "거래처명",
-  "productName": "제품명",
-  "size": "제품사이즈",
-  "qty": 수량(숫자),
-  "calW": "칼규격 가로(숫자만)",
-  "calH": "칼규격 세로(숫자만)",
-  "jo": "조수(숫자만, 없으면 1)",
-  "dd": "납기일(YYYY-MM-DD형식, 연도 2자리면 20XX로)",
-  "da": "납품처",
-  "memo": "비고 또는 특이사항",
-  "procs": [
-    {"type": "jiryu|print|coating|foil|hapji|thomson|ssabari|assembly|carton|delivery", "vendor": "업체명", "note": "요청사항", "subType": "서브타입(해당시)"}
-  ]
-}
-공정 type 매핑: 지류=jiryu, 인쇄=print, 코팅=coating, 금박/은박=foil, 합지=hapji, 톰슨=thomson, 싸바리=ssabari, 조립=assembly, 카톤=carton, 배송=delivery
-subType 매핑: 톰슨이면 신규목형/기존목형/목형 수정 중 하나, 코팅이면 무광라미/유광라미/써멀무광/써멀유광/UV코팅 중 하나`}
-          ]
-        }]
-      })
+    // Supabase Edge Function 호출 (CORS 우회)
+    const EDGE_URL = SUPA_URL + '/functions/v1/parse-order-pdf';
+    const response = await fetch(EDGE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + SUPA_KEY,
+      },
+      body: JSON.stringify({ pdfBase64: b64 })
     });
 
-    const data=await response.json();
-    const text=data.content?.[0]?.text||'';
-    const clean=text.replace(/\`\`\`json|\`\`\`/g,'').trim();
-    const parsed=JSON.parse(clean);
+    const result = await response.json();
+    if(!response.ok || !result.success) {
+      throw new Error(result.error || 'Edge Function 오류');
+    }
+    const parsed = result.data;
 
     // 파싱된 데이터로 발주 등록 폼 열기
     const today=new Date().toISOString().split('T')[0];

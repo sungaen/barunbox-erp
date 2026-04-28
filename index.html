@@ -1163,9 +1163,9 @@ async function saveOrder(oid){
   const projId=o.project_id||null;
   const data={
     client_id:clId||null,
-    client_name:cl?.name||o.clientName||'',
-    company:o.company||'c1',
-    manager:o.manager||'m1',
+    client_name:cl?.name||document.getElementById('eq-cl-search')?.value||o.clientName||'',
+    company:document.getElementById('eq-co')?.value||o.company||'c1',
+    manager:document.getElementById('eq-mg')?.value||o.manager||'m1',
     name:document.getElementById('eq-pn')?.value||o.productName||o.name||'',
     product_name:document.getElementById('eq-pn')?.value||o.productName||'',
     size:document.getElementById('eq-sz')?.value||'',
@@ -1288,7 +1288,10 @@ async function saveOrder(oid){
   } else {
     // 신규 저장 (일반 신규)
     const r=await api('orders','POST',data);
-    if(!r||!r[0]){toast('저장 실패');return;}
+    if(!r||!r[0]){
+      console.error('[저장실패] data:', JSON.stringify(data).substring(0,300), 'result:', JSON.stringify(r));
+      toast('저장 실패 - 콘솔 확인');return;
+    }
     savedOid=r[0].id;
   }
 

@@ -379,6 +379,7 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
   <div id="panel-orders"></div>
   <div id="panel-vendor" style="display:none;"></div>
   <div id="panel-calendar" style="display:none;"></div>
+  <div id="panel-carton-order" style="display:none;"></div>
   <div id="panel-carton" style="display:none;"></div>
   <div id="panel-clients" style="display:none;"></div>
   <div id="panel-molds" style="display:none;"></div>
@@ -437,7 +438,7 @@ const JO=['1조','2조','3조','4조','5조','6조','7조','8조','9조','10조'
 const ADD=['+ 패드','+ 내지','+ 속지','+ 칸막이','+ 보드지','+ 삼각싸바리','+ 마그네트'];
 const STATUS_MAP={대기:'badge-gray',진행중:'badge-blue',완료:'badge-green','생산완료대기':'badge-amber',출고완료:'badge-green'};
 
-let DB={clients:[],orders:[],jiryuDB:[],vendorDB:{},cartonTypes:[],cartonStock:[],cartonMovements:[],cartonVendorStock:[],productStock:[],productStockMovements:[]};
+let DB={clients:[],orders:[],jiryuDB:[],vendorDB:{},cartonTypes:[],cartonStock:[],cartonMovements:[],cartonVendorStock:[],productStock:[],productStockMovements:[],cartonOrders:[]};
 let curTab='orders',MOD=null,curOid=null;
 let _ok=null,_cancel=null;
 
@@ -454,7 +455,7 @@ function getMonthCount(arr){
 async function syncAll(){
   document.getElementById('sync-status').textContent='동기화 중...';
   try{
-    const [cl,od,jd,vd,ct,cs,cm,cvs,ps,psm]=await Promise.all([
+    const [cl,od,jd,vd,ct,cs,cm,cvs,ps,psm,co]=await Promise.all([
       api('clients','GET',null,'order=name.asc'),
       api('orders','GET',null,'order=created_at.desc&select=*,processes(*)'),
       api('jiryu_db','GET',null,'order=name.asc'),
@@ -465,6 +466,7 @@ async function syncAll(){
       api('carton_vendor_stock','GET',null,'order=vendor.asc'),
       api('product_stock','GET',null,'order=client_name.asc'),
       api('product_stock_movements','GET',null,'order=created_at.desc'),
+      api('carton_orders','GET',null,'order=created_at.desc'),
     ]);
     if(cl)DB.clients=cl;
     if(jd)DB.jiryuDB=jd.map(j=>({...j,w:j.weights||[]}));
@@ -480,6 +482,7 @@ async function syncAll(){
     if(cvs)DB.cartonVendorStock=cvs;
     if(ps)DB.productStock=ps;
     if(psm)DB.productStockMovements=psm;
+    if(co)DB.cartonOrders=co;
     if(od){
       DB.orders=od.map(o=>mapOrder(o));
       // 신규 발주가 있을 수 있으므로 연도 탭 리셋
@@ -560,6 +563,7 @@ function rOrders(){
   h+='<button class="btn btn-primary" onclick="openOrderForm()">+ 신규 발주 등록</button>';
   h+='<button class="btn" onclick="openReorderModal()">↻ 재발주</button>';
   h+='<label class="btn" style="cursor:pointer;background:#7C3AED;color:#fff;border-color:#7C3AED;" title="PDF 발주서 업로드 → AI 자동 입력">🤖 AI 자동입력<input type="file" accept=".pdf" style="display:none;" onchange="importOrderFromPDF(this)"/></label>';
+  h+='<button class="btn" style="background:#0891b2;color:#fff;border-color:#0891b2;" onclick="openCartonOrderForm()">📦 카톤 발주</button>';
   h+='</div>';
   h+='<div style="background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:12px 16px;margin-bottom:10px;">';
   h+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
@@ -902,22 +906,7 @@ function openOrderForm(oid){
             ${DB.cartonTypes.map(c=>'<option value="'+c.id+'" '+(o.carton_type_id===c.id?'selected':'')+'>'+c.name+' (재고:'+c.stock+')</option>').join('')}
           </select>
         </div>
-        <div class="field" style="background:#f0f4ff;border:1.5px solid #c7d7ff;border-radius:8px;padding:10px 12px;">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:8px;">
-            <input type="checkbox" id="eq-is-carton-stock" ${o.is_carton_stock?'checked':''} onchange="toggleCartonStockMode(this.checked)"/>
-            <span style="font-weight:600;color:#2563eb;">📦 재고관리용 카톤 발주</span>
-          </label>
-          <div id="eq-carton-stock-fields" style="display:${o.is_carton_stock?'block':'none'};">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-              <div><label>카톤 사이즈</label>
-                <input type="text" id="eq-carton-size" value="${o.carton_size||''}" placeholder="예: 550*380*350"/>
-              </div>
-              <div><label>카톤 발주 수량</label>
-                <input type="number" id="eq-carton-qty" value="${o.carton_qty||0}" placeholder="0"/>
-              </div>
-            </div>
-          </div>
-        </div>
+
         <div class="field" style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:8px;padding:10px 12px;margin-top:6px;">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
             <input type="checkbox" id="eq-is-product-stock" ${o.is_product_stock?'checked':''} />
@@ -2501,6 +2490,164 @@ async function markShipped(oid){
 }
 
 /* ══ 5. 카톤 재고 ══ */
+function rCartonOrder(){
+  const el=document.getElementById('panel-carton-order');
+  if(!el)return;
+  const orders=DB.cartonOrders||[];
+  const STATUS_COLOR={'발주':'#f59e0b','입고완료':'#16a34a','취소':'#888'};
+
+  el.innerHTML=`
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+    <span style="font-size:15px;font-weight:700;">📦 카톤 발주 관리</span>
+    <button class="btn btn-primary btn-sm" onclick="openCartonOrderForm()">+ 카톤 발주 등록</button>
+  </div>
+
+  <!-- 요약 카드 -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:1rem;">
+    <div style="background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:14px;text-align:center;">
+      <div style="font-size:11px;color:#888;margin-bottom:4px;">전체 발주</div>
+      <div style="font-size:22px;font-weight:700;">${orders.length}</div>
+    </div>
+    <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:10px;padding:14px;text-align:center;">
+      <div style="font-size:11px;color:#854d0e;margin-bottom:4px;">진행중</div>
+      <div style="font-size:22px;font-weight:700;">${orders.filter(o=>o.status==='발주').length}</div>
+    </div>
+    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:14px;text-align:center;">
+      <div style="font-size:11px;color:#166534;margin-bottom:4px;">입고완료</div>
+      <div style="font-size:22px;font-weight:700;">${orders.filter(o=>o.status==='입고완료').length}</div>
+    </div>
+  </div>
+
+  <!-- 발주 목록 -->
+  <div style="background:#fff;border:1px solid #e8e8e4;border-radius:10px;overflow:hidden;">
+    <div style="display:grid;grid-template-columns:1fr 80px 1fr 90px 90px 80px auto;gap:8px;padding:8px 14px;background:#f5f5f3;font-size:11px;font-weight:600;color:#888;">
+      <div>카톤 사이즈</div><div>수량</div><div>공급업체</div><div>발주일</div><div>납기일</div><div>상태</div><div></div>
+    </div>
+    ${!orders.length?'<div style="text-align:center;padding:40px;color:#aaa;">발주 내역이 없어요</div>':
+      orders.map(o=>`<div style="display:grid;grid-template-columns:1fr 80px 1fr 90px 90px 80px auto;gap:8px;padding:10px 14px;border-top:1px solid #f0f0ee;font-size:13px;align-items:center;">
+        <div style="font-weight:600;">${o.size||'-'}</div>
+        <div style="font-weight:700;">${(o.qty||0).toLocaleString()}</div>
+        <div style="color:#555;">${o.vendor||'-'}</div>
+        <div style="color:#888;">${o.order_date||'-'}</div>
+        <div style="color:${o.due_date&&new Date(o.due_date)<new Date()?'#ef4444':'#555'}">${o.due_date||'-'}</div>
+        <div><span style="background:${STATUS_COLOR[o.status]||'#888'}22;color:${STATUS_COLOR[o.status]||'#888'};border:1px solid ${STATUS_COLOR[o.status]||'#888'}44;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:600;">${o.status||'발주'}</span></div>
+        <div style="display:flex;gap:4px;">
+          ${o.status==='발주'?`<button class="btn btn-sm btn-primary" style="font-size:11px;" onclick="cartonOrderInbound(${o.id})">입고처리</button>`:''}
+          <button class="btn btn-sm" style="font-size:11px;" onclick="editCartonOrder(${o.id})">편집</button>
+          <button class="btn btn-sm btn-danger" style="font-size:11px;" onclick="deleteCartonOrder(${o.id})">삭제</button>
+        </div>
+      </div>`).join('')
+    }
+  </div>`;
+}
+
+function openCartonOrderForm(id){
+  const order = id ? (DB.cartonOrders||[]).find(o=>o.id===id) : null;
+  const today = new Date().toISOString().split('T')[0];
+  // 기존 carton_stock 사이즈 목록
+  const sizes=[...(DB.cartonStock||[]).map(s=>s.size),...new Set((DB.cartonOrders||[]).map(o=>o.size))].filter(Boolean);
+  const sizeOpts=sizes.map(s=>`<option value="${s}" ${order?.size===s?'selected':''}>${s}</option>`).join('');
+
+  openMod(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+    <span style="font-size:15px;font-weight:600;">${id?'카톤 발주 편집':'📦 카톤 발주 등록'}</span>
+    <button class="btn btn-sm" onclick="closeMod()">닫기</button>
+  </div>
+  <div class="g2">
+    <div class="field"><label>카톤 사이즈 *</label>
+      <input type="text" id="co-size" value="${order?.size||''}" placeholder="예: 550*380*350" list="co-size-list"/>
+      <datalist id="co-size-list">${sizeOpts}</datalist>
+    </div>
+    <div class="field"><label>발주 수량 *</label>
+      <input type="number" id="co-qty" value="${order?.qty||''}" placeholder="0"/>
+    </div>
+  </div>
+  <div class="field"><label>공급 업체</label>
+    <input type="text" id="co-vendor" value="${order?.vendor||''}" placeholder="업체명"/>
+  </div>
+  <div class="g2">
+    <div class="field"><label>발주일</label>
+      <input type="date" id="co-order-date" value="${order?.order_date||today}"/>
+    </div>
+    <div class="field"><label>납기일</label>
+      <input type="date" id="co-due-date" value="${order?.due_date||''}"/>
+    </div>
+  </div>
+  <div class="field"><label>메모</label>
+    <input type="text" id="co-note" value="${order?.note||''}" placeholder="메모 (선택)"/>
+  </div>
+  <button class="btn btn-primary" onclick="saveCartonOrder(${id||'null'})" style="width:100%;margin-top:8px;">저장</button>`);
+}
+
+function editCartonOrder(id){ openCartonOrderForm(id); }
+
+async function saveCartonOrder(id){
+  const size=document.getElementById('co-size')?.value?.trim();
+  const qty=parseInt(document.getElementById('co-qty')?.value)||0;
+  const vendor=document.getElementById('co-vendor')?.value||'';
+  const orderDate=document.getElementById('co-order-date')?.value||null;
+  const dueDate=document.getElementById('co-due-date')?.value||null;
+  const note=document.getElementById('co-note')?.value||'';
+  if(!size){toast('카톤 사이즈를 입력해주세요');return;}
+  if(!qty){toast('수량을 입력해주세요');return;}
+
+  const data={size,qty,vendor,order_date:orderDate,due_date:dueDate,note};
+  if(id){
+    await api('carton_orders','PATCH',data,'id=eq.'+id);
+    const idx=(DB.cartonOrders||[]).findIndex(o=>o.id===id);
+    if(idx>-1) DB.cartonOrders[idx]={...DB.cartonOrders[idx],...data};
+    toast('✅ 수정 완료');
+  } else {
+    const r=await api('carton_orders','POST',{...data,status:'발주'});
+    if(r&&r[0]){
+      if(!DB.cartonOrders)DB.cartonOrders=[];
+      DB.cartonOrders.unshift(r[0]);
+      // carton_stock에 해당 사이즈 없으면 자동 추가
+      const existing=DB.cartonStock.find(s=>s.size===size);
+      if(!existing){
+        const sr=await api('carton_stock','POST',{size,current_stock:0});
+        if(sr&&sr[0])DB.cartonStock.push(sr[0]);
+      }
+      toast('✅ 카톤 발주 등록 완료');
+    }
+  }
+  closeMod();
+  rCartonOrder();
+}
+
+async function cartonOrderInbound(id){
+  const order=(DB.cartonOrders||[]).find(o=>o.id===id);
+  if(!order)return;
+  if(!confirm(`"${order.size}" ${order.qty.toLocaleString()}개를 입고 처리할까요?
+재고 현황에 자동으로 반영됩니다.`))return;
+  const today=new Date().toISOString().split('T')[0];
+
+  // 상태 변경
+  await api('carton_orders','PATCH',{status:'입고완료'},'id=eq.'+id);
+
+  // carton_stock 재고 증가
+  let stock=DB.cartonStock.find(s=>s.size===order.size);
+  if(!stock){
+    const r=await api('carton_stock','POST',{size:order.size,current_stock:0});
+    if(r&&r[0]){stock=r[0];DB.cartonStock.push(r[0]);}
+  }
+  if(stock){
+    await api('carton_stock','PATCH',{current_stock:(stock.current_stock||0)+order.qty},'id=eq.'+stock.id);
+    await api('carton_movements','POST',{carton_stock_id:stock.id,move_type:'in',qty:order.qty,move_date:today,note:'카톤 발주 입고 (발주ID:'+id+')'});
+  }
+
+  toast('✅ 입고 완료! 재고 현황에 반영됐어요.');
+  await syncAll();
+  rCartonOrder();
+}
+
+async function deleteCartonOrder(id){
+  if(!confirm('이 발주를 삭제할까요?'))return;
+  await api('carton_orders','DELETE',null,'id=eq.'+id);
+  DB.cartonOrders=(DB.cartonOrders||[]).filter(o=>o.id!==id);
+  rCartonOrder();
+  toast('삭제 완료');
+}
+
 function rCarton(tab){
   const el=document.getElementById('panel-carton');
   if(!el)return;
@@ -3836,7 +3983,7 @@ function onRouteInput(i,v){
   const newProc={id:'tmp_'+Date.now(),type:procType,vendor:v,vendorDirect:false,
     note:'',route:'',routeAuto:true,doneDate:'',is_done:false};
   const SM2={coating:'무광라미',foil:'유광금박',hapji:'양면합지',thomson:'신규목형',
-    ssabari:'2단싸바리',delivery:'자차',carton:'',material:'',pyoji:'2단표지'};
+    ssabari:'2단싸바리',delivery:'자차',carton:'','carton-order':'',material:'',pyoji:'2단표지'};
   if(SM2[procType])newProc.subType=SM2[procType];
   // i+1 위치에 삽입
   procs.splice(nextIdx,0,newProc);
@@ -3904,7 +4051,7 @@ function addProc(type){
   const vl=gv(type);
   const base={id:'tmp_'+Date.now(),type,vendor:vl[0]||'',vendorDirect:false,note:'',route:'',routeAuto:true,doneDate:'',is_done:false};
   if(type==='jiryu')Object.assign(base,{jt:DB.jiryuDB[0]?.name||'편아트지',weight:160,w:'',h:'',grain:'장결',qty:''});
-  const SM2={coating:'무광라미',foil:'유광금박',hapji:'양면합지',thomson:'신규목형',ssabari:'2단싸바리',delivery:'자차',carton:'',material:'',pyoji:'2단표지'};
+  const SM2={coating:'무광라미',foil:'유광금박',hapji:'양면합지',thomson:'신규목형',ssabari:'2단싸바리',delivery:'자차',carton:'','carton-order':'',material:'',pyoji:'2단표지'};
   if(SM2[type])base.subType=SM2[type];
   const o=getEO();if(!o)return;
   if(!o.procs)o.procs=[];

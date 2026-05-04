@@ -2542,111 +2542,141 @@ function rCartonOrder(){
 }
 
 function openCartonOrderForm(id){
-  const order = id ? (DB.cartonOrders||[]).find(o=>o.id===id) : null;
+  const order = id ? (DB.orders||[]).find(o=>o.id===id) : null;
   const today = new Date().toISOString().split('T')[0];
-  // 기존 carton_stock 사이즈 목록
-  const sizes=[...(DB.cartonStock||[]).map(s=>s.size),...new Set((DB.cartonOrders||[]).map(o=>o.size))].filter(Boolean);
-  const sizeOpts=sizes.map(s=>`<option value="${s}" ${order?.size===s?'selected':''}>${s}</option>`).join('');
+  const cartonVendors = gv('carton');
+  const selCompany = order?.company||'c1';
+  const selManager = order?.manager||'m1';
+  const selVendor = (order?.processes||[])[0]?.vendor||'';
+
+  window._editOrder = {
+    id: id||null, company: selCompany, manager: selManager,
+    productName: order?.productName||order?.name||'',
+    size: order?.carton_size||order?.size||'',
+    qty: order?.qty||0, memo: order?.memo||'밴딩',
+    da: order?.da||'창고보관', dd: order?.dd||'',
+    ordered: order?.ordered||today,
+    js: order?.jiryu_spec||order?.js||'',
+    is_carton_stock: true,
+    procs:[{type:'carton',vendor:selVendor,
+      note:(order?.processes||[])[0]?.note||'',
+      doneDate:(order?.processes||[])[0]?.doneDate||''}]
+  };
+
+  const coList=COS.map(c=>`<div class="co-company-item" data-id="${c.id}" style="border:1px solid ${selCompany===c.id?'#1a1a1a':'#e8e8e4'};border-radius:6px;padding:8px 12px;cursor:pointer;margin-bottom:5px;background:${selCompany===c.id?'#f5f5f3':'#fff'};"><div style="font-weight:600;font-size:13px;">${c.name}</div><div style="font-size:11px;color:#888;">${c.biz}</div></div>`).join('');
+  const mgList=MGS.map(m=>`<div class="co-manager-item" data-id="${m.id}" style="border:1px solid ${selManager===m.id?'#1a1a1a':'#e8e8e4'};border-radius:6px;padding:7px 12px;cursor:pointer;margin-bottom:5px;background:${selManager===m.id?'#f5f5f3':'#fff'};"><div style="font-size:13px;font-weight:500;">${m.name} ${m.title}</div><div style="font-size:11px;color:#888;">${m.tel}</div></div>`).join('');
+  const vList=cartonVendors.map(v=>`<option value="${v}" ${selVendor===v?'selected':''}>${v}</option>`).join('');
 
   openMod(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-    <span style="font-size:15px;font-weight:600;">${id?'카톤 발주 편집':'📦 카톤 발주 등록'}</span>
-    <button class="btn btn-sm" onclick="closeMod()">닫기</button>
-  </div>
-  <div class="g2">
-    <div class="field"><label>카톤 사이즈 *</label>
-      <input type="text" id="co-size" value="${order?.size||''}" placeholder="예: 550*380*350" list="co-size-list"/>
-      <datalist id="co-size-list">${sizeOpts}</datalist>
-    </div>
-    <div class="field"><label>발주 수량 *</label>
-      <input type="number" id="co-qty" value="${order?.qty||''}" placeholder="0"/>
+    <span style="font-size:15px;font-weight:700;">📦 카톤 발주 등록</span>
+    <div style="display:flex;gap:6px;">
+      <button class="btn btn-primary" onclick="saveCartonOrder('${id||''}')">저장</button>
+      <button class="btn btn-sm" onclick="closeMod()">닫기</button>
     </div>
   </div>
-  <div class="field"><label>공급 업체</label>
-    <input type="text" id="co-vendor" value="${order?.vendor||''}" placeholder="업체명"/>
-  </div>
-  <div class="g2">
-    <div class="field"><label>발주일</label>
-      <input type="date" id="co-order-date" value="${order?.order_date||today}"/>
+  <div style="display:grid;grid-template-columns:220px 1fr;gap:1rem;">
+    <div>
+      <div class="sec">발주 사업자</div>
+      <div id="co-company-list">${coList}</div>
+      <div class="sec" style="margin-top:1rem;">담당자</div>
+      <div id="co-manager-list">${mgList}</div>
     </div>
-    <div class="field"><label>납기일</label>
-      <input type="date" id="co-due-date" value="${order?.due_date||''}"/>
+    <div>
+      <div class="sec">제품 정보</div>
+      <div class="g2">
+        <div class="field"><label>제품명 *</label><input type="text" id="eq-pn" value="${window._editOrder.productName}" placeholder="제품명 입력"/></div>
+        <div class="field"><label>사이즈</label><input type="text" id="eq-sz" value="${window._editOrder.size}" placeholder="예: 460*330*300"/></div>
+      </div>
+      <div class="g2">
+        <div class="field"><label>수량</label><input type="number" id="eq-qty" value="${window._editOrder.qty||''}" placeholder="0"/></div>
+        <div class="field"><label>포장 방법</label><input type="text" id="eq-memo" value="${window._editOrder.memo}" placeholder="밴딩"/></div>
+      </div>
+      <div class="g2">
+        <div class="field"><label>납기일</label><input type="date" id="eq-dd" value="${window._editOrder.dd}"/></div>
+        <div class="field"><label>납품처</label><input type="text" id="eq-da" value="${window._editOrder.da}" placeholder="창고보관"/></div>
+      </div>
+      <div class="field"><label>발주일</label><input type="date" id="eq-ordered" value="${window._editOrder.ordered}"/></div>
+      <div class="sec" style="margin-top:1rem;">카톤 발주처</div>
+      <div style="border:1px solid #e8e8e4;border-radius:8px;padding:12px;background:#fafaf8;">
+        <div class="g2" style="margin-bottom:8px;">
+          <div class="field"><label>공급 업체</label>
+            <select id="co-vendor" style="width:100%;"><option value="">선택</option>${vList}</select>
+            <input type="text" id="co-vendor-direct" placeholder="직접 입력" style="margin-top:4px;" value="${!cartonVendors.includes(selVendor)&&selVendor?selVendor:''}"/>
+          </div>
+          <div class="field"><label>완료 요청일</label><input type="date" id="co-done-date" value="${window._editOrder.procs[0].doneDate}"/></div>
+        </div>
+        <div class="field"><label>작업 요청사항</label><textarea id="co-note" style="height:60px;" placeholder="작업 요청사항">${window._editOrder.procs[0].note}</textarea></div>
+      </div>
+      <div class="field" style="margin-top:8px;"><label>지류 사양</label><input type="text" id="eq-js" value="${window._editOrder.js}" placeholder="예: SK.3S.K(B/B골) 460*330*300=600매"/></div>
     </div>
-  </div>
-  <div class="field"><label>메모</label>
-    <input type="text" id="co-note" value="${order?.note||''}" placeholder="메모 (선택)"/>
-  </div>
-  <button class="btn btn-primary" onclick="saveCartonOrder(${id||'null'})" style="width:100%;margin-top:8px;">저장</button>`);
-}
+  </div>`);
 
-function editCartonOrder(id){ openCartonOrderForm(id); }
+  document.querySelectorAll('.co-company-item').forEach(el=>{
+    el.addEventListener('click',function(){
+      window._editOrder.company=this.dataset.id;
+      document.querySelectorAll('.co-company-item').forEach(e=>{e.style.border='1px solid #e8e8e4';e.style.background='#fff';});
+      this.style.border='1px solid #1a1a1a';this.style.background='#f5f5f3';
+    });
+  });
+  document.querySelectorAll('.co-manager-item').forEach(el=>{
+    el.addEventListener('click',function(){
+      window._editOrder.manager=this.dataset.id;
+      document.querySelectorAll('.co-manager-item').forEach(e=>{e.style.border='1px solid #e8e8e4';e.style.background='#fff';});
+      this.style.border='1px solid #1a1a1a';this.style.background='#f5f5f3';
+    });
+  });
+}
 
 async function saveCartonOrder(id){
-  const size=document.getElementById('co-size')?.value?.trim();
-  const qty=parseInt(document.getElementById('co-qty')?.value)||0;
-  const vendor=document.getElementById('co-vendor')?.value||'';
-  const orderDate=document.getElementById('co-order-date')?.value||null;
-  const dueDate=document.getElementById('co-due-date')?.value||null;
+  const o=window._editOrder||{};
+  const size=document.getElementById('eq-sz')?.value?.trim()||'';
+  const qty=parseInt(document.getElementById('eq-qty')?.value)||0;
+  const vendor=document.getElementById('co-vendor-direct')?.value?.trim()||document.getElementById('co-vendor')?.value||'';
+  const doneDate=document.getElementById('co-done-date')?.value||null;
   const note=document.getElementById('co-note')?.value||'';
-  if(!size){toast('카톤 사이즈를 입력해주세요');return;}
+  const productName=document.getElementById('eq-pn')?.value||size||'';
+  const memo=document.getElementById('eq-memo')?.value||'밴딩';
+  const da=document.getElementById('eq-da')?.value||'창고보관';
+  const js=document.getElementById('eq-js')?.value||'';
+  const ordered=document.getElementById('eq-ordered')?.value||new Date().toISOString().split('T')[0];
+  const dd=document.getElementById('eq-dd')?.value||null;
+  if(!productName){toast('제품명을 입력해주세요');return;}
   if(!qty){toast('수량을 입력해주세요');return;}
 
-  const data={size,qty,vendor,order_date:orderDate,due_date:dueDate,note};
+  const data={
+    company:o.company||'c1', manager:o.manager||'m1',
+    name:productName, product_name:productName,
+    size:size, qty:qty, carton_size:size, carton_qty:qty,
+    is_carton_stock:true, memo:memo, da:da, dd:dd,
+    ordered:ordered, jiryu_spec:js, status:'대기',
+    client_id:null, client_name:'',
+  };
+
+  let savedId=id||null;
   if(id){
-    await api('carton_orders','PATCH',data,'id=eq.'+id);
-    const idx=(DB.cartonOrders||[]).findIndex(o=>o.id===id);
-    if(idx>-1) DB.cartonOrders[idx]={...DB.cartonOrders[idx],...data};
-    toast('✅ 수정 완료');
+    await api('orders','PATCH',data,'id=eq.'+id);
+    await api('processes','DELETE',null,'order_id=eq.'+id);
   } else {
-    const r=await api('carton_orders','POST',{...data,status:'발주'});
-    if(r&&r[0]){
-      if(!DB.cartonOrders)DB.cartonOrders=[];
-      DB.cartonOrders.unshift(r[0]);
-      // carton_stock에 해당 사이즈 없으면 자동 추가
-      const existing=DB.cartonStock.find(s=>s.size===size);
-      if(!existing){
-        const sr=await api('carton_stock','POST',{size,current_stock:0});
-        if(sr&&sr[0])DB.cartonStock.push(sr[0]);
-      }
-      toast('✅ 카톤 발주 등록 완료');
+    const r=await api('orders','POST',data);
+    if(!r||!r[0]){toast('저장 실패');return;}
+    savedId=r[0].id;
+    if(size&&!DB.cartonStock.find(s=>s.size===size)){
+      const sr=await api('carton_stock','POST',{size,current_stock:0});
+      if(sr&&sr[0])DB.cartonStock.push(sr[0]);
     }
   }
+  if(vendor){
+    await api('processes','POST',{
+      order_id:savedId,type:'carton',vendor,note,
+      sub_type:'',route:'',route_auto:false,
+      done_date:doneDate||null,is_done:false
+    });
+  }
+  toast('✅ 카톤 발주 등록 완료!');
   closeMod();
-  rCartonOrder();
-}
-
-async function cartonOrderInbound(id){
-  const order=(DB.cartonOrders||[]).find(o=>o.id===id);
-  if(!order)return;
-  if(!confirm(`"${order.size}" ${order.qty.toLocaleString()}개를 입고 처리할까요?
-재고 현황에 자동으로 반영됩니다.`))return;
-  const today=new Date().toISOString().split('T')[0];
-
-  // 상태 변경
-  await api('carton_orders','PATCH',{status:'입고완료'},'id=eq.'+id);
-
-  // carton_stock 재고 증가
-  let stock=DB.cartonStock.find(s=>s.size===order.size);
-  if(!stock){
-    const r=await api('carton_stock','POST',{size:order.size,current_stock:0});
-    if(r&&r[0]){stock=r[0];DB.cartonStock.push(r[0]);}
-  }
-  if(stock){
-    await api('carton_stock','PATCH',{current_stock:(stock.current_stock||0)+order.qty},'id=eq.'+stock.id);
-    await api('carton_movements','POST',{carton_stock_id:stock.id,move_type:'in',qty:order.qty,move_date:today,note:'카톤 발주 입고 (발주ID:'+id+')'});
-  }
-
-  toast('✅ 입고 완료! 재고 현황에 반영됐어요.');
   await syncAll();
-  rCartonOrder();
 }
 
-async function deleteCartonOrder(id){
-  if(!confirm('이 발주를 삭제할까요?'))return;
-  await api('carton_orders','DELETE',null,'id=eq.'+id);
-  DB.cartonOrders=(DB.cartonOrders||[]).filter(o=>o.id!==id);
-  rCartonOrder();
-  toast('삭제 완료');
-}
 
 function rCarton(tab){
   const el=document.getElementById('panel-carton');

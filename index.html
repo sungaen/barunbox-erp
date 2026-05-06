@@ -3502,11 +3502,36 @@ function openReorderModal(){
         +'</div>'
         +'<span style="font-size:12px;">'+(o.procs||[]).map(function(p){return PM[p.type]?.name||'';}).join('→')+'</span>'
         +'<span>'+(o.qty||0).toLocaleString()+'ea</span>'
-        +'<button class="btn btn-sm btn-primary">이 건으로 재발주</button>'
+        +'<div style="display:flex;gap:4px;">'        +'<button class="btn btn-sm btn-primary" onclick="doReorder(this.closest(\'.crow\').dataset.oid)">↻ 재발주</button>'        +'<button class="btn btn-sm" style="background:#16a34a;color:#fff;border-color:#16a34a;" onclick="doReorderAsNew(this.closest(\'.crow\').dataset.oid)">+ 신규 등록</button>'        +'</div>'
         +'</div>';
     }).join('')
     +'</div>');
 }
+function doReorderAsNew(oid){
+  // 기존 발주서를 복사해서 완전히 새 발주로 등록 (재발주 아님)
+  const o=DB.orders.find(x=>x.id===oid);if(!o)return;
+  closeMod();
+  const copy=JSON.parse(JSON.stringify(o));
+  copy.id=null;
+  copy.is_reorder=false;      // 신규 발주
+  copy.src_order_id=null;
+  copy._srcId=null;
+  copy._srcSnapshot=null;
+  copy.ordered=new Date().toISOString().split('T')[0];
+  copy.dd='';
+  copy.status='대기';
+  copy.shipped=false;
+  copy.shipped_date=null;
+  copy.project_id=null;
+  copy.project_name=null;
+  copy.procs=(copy.procs||[]).map(function(p,i){
+    return Object.assign({},p,{id:'tmp_'+Date.now()+'_'+i,is_done:false,order_id:null,done_date:null});
+  });
+  window._editOrder=copy;
+  curOid=null;
+  openOrderForm(null);
+}
+
 function filterReorder(q){
   document.querySelectorAll('#reorder-list .crow').forEach(row=>{
     row.style.display=q?row.textContent.includes(q)?'grid':'none':'grid';
@@ -3776,12 +3801,32 @@ function bPC(p,i){
 function chgProcType(i, newType){
   const o=getEO();
   if(!o||!o.procs[i])return;
-  const oldType=o.procs[i].type;
   o.procs[i].type=newType;
-  // 공정 타입 바뀌면 subType 초기화
   o.procs[i].subType='';
+  o.procs[i].vendor='';
+  o.procs[i].note='';
+
+  // 공정 카드 전체 다시 그리기
+  const cards=document.querySelectorAll('.pc');
+  if(cards[i]){
+    const p=o.procs[i];
+    const m=PM[newType]||{name:newType,color:'#888',cls:'tt'};
+    // 헤더의 select 색상 업데이트
+    const sel=cards[i].querySelector('.pch select');
+    if(sel){sel.style.background=m.color+'22';sel.style.color=m.color;}
+    // 본문(pcb) 다시 렌더링
+    const pcb=cards[i].querySelector('.pcb');
+    if(pcb) pcb.innerHTML = newType==='jiryu'?bJB(p,i):bGB(p,i);
+    // 이벤트 재바인딩
+    bindProcEvents(i);
+  }
   rFB();
   setTimeout(syncMoldSpecs,100);
+}
+
+function bindProcEvents(i){
+  // 공정 카드 내 동적 이벤트 재연결이 필요한 경우 처리
+  // 현재는 onclick 인라인으로 처리되므로 별도 바인딩 불필요
 }
 function vSel(p,i,vl){
   const isDirect=p.vendorDirect||(!vl.includes(p.vendor)&&p.vendor);

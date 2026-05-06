@@ -3757,7 +3757,12 @@ function bPC(p,i){
   const m=PM[p.type]||{name:p.type,color:'#888',cls:'tt'};
   const isLast=i===(getEO()?.procs?.length||0)-1;
   const rt=p.routeAuto?`<span class="ra">자동</span>`:`<span class="rm">수동</span>`;
-  return `<div class="pch"><span class="dh">⠿</span><span class="pb ${m.cls}">${m.name}</span>
+  // 공정 타입 드롭다운 옵션 생성
+  const pmOpts=Object.entries(PM).map(([k,v])=>
+    `<option value="${k}" ${p.type===k?'selected':''}>${v.name}</option>`
+  ).join('');
+  return `<div class="pch"><span class="dh">⠿</span>
+    <select class="pb" onchange="chgProcType(${i},this.value)" style="border:none;border-radius:5px;padding:2px 6px;font-size:12px;font-weight:700;cursor:pointer;background:${m.color}22;color:${m.color};min-width:80px;">${pmOpts}</select>
     <span style="font-size:13px;font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.vendor||'미입력'}</span>
     ${p.route?`<span style="font-size:11px;color:#888;white-space:nowrap;">${p.route} ${rt}</span>`:''}
     <div style="display:flex;gap:3px;flex-shrink:0;">
@@ -3766,6 +3771,17 @@ function bPC(p,i){
       <button class="btn btn-sm btn-danger" onclick="delP(${i})">삭제</button>
     </div></div>
   <div class="pcb">${p.type==='jiryu'?bJB(p,i):bGB(p,i)}</div>`;
+}
+
+function chgProcType(i, newType){
+  const o=getEO();
+  if(!o||!o.procs[i])return;
+  const oldType=o.procs[i].type;
+  o.procs[i].type=newType;
+  // 공정 타입 바뀌면 subType 초기화
+  o.procs[i].subType='';
+  rFB();
+  setTimeout(syncMoldSpecs,100);
 }
 function vSel(p,i,vl){
   const isDirect=p.vendorDirect||(!vl.includes(p.vendor)&&p.vendor);

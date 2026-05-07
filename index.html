@@ -1001,6 +1001,13 @@ function openOrderForm(oid){
     window._editOrder.is_reorder = prevMeta.is_reorder;
     window._editOrder.src_order_id = prevMeta.src_order_id;
   }
+  // 디자인/목형을 항상 맨 아래로 정렬
+  if(o.procs){
+    const FIXED=['design','mold'];
+    const normal=o.procs.filter(p=>!FIXED.includes(p.type));
+    const fixed=o.procs.filter(p=>FIXED.includes(p.type));
+    o.procs=[...normal,...fixed];
+  }
   window._linkedMolds={};
   rProcs();
   // 편집 시 기존 첨부파일 로드
@@ -3780,7 +3787,14 @@ function rProcs(){
   autoR(o.procs);
   const list=document.getElementById('PROCLIST');if(!list)return;
   list.innerHTML='';
-  o.procs.forEach((p,i)=>{
+
+  // 디자인/목형 분리: 일반 공정 / 고정 공정(항상 맨 아래)
+  const FIXED=['design','mold'];
+  const normalProcs=o.procs.map((p,i)=>({p,i})).filter(x=>!FIXED.includes(x.p.type));
+  const fixedProcs=o.procs.map((p,i)=>({p,i})).filter(x=>FIXED.includes(x.p.type));
+
+  // 일반 공정 렌더링 (드래그/이동/삭제 가능)
+  normalProcs.forEach(({p,i})=>{
     const div=document.createElement('div');div.className='pc';div.draggable=true;
     div.addEventListener('dragstart',e=>e.dataTransfer.setData('text/plain',String(i)));
     div.addEventListener('dragover',e=>{e.preventDefault();div.classList.add('dov');});
@@ -3788,9 +3802,51 @@ function rProcs(){
     div.addEventListener('drop',e=>{e.preventDefault();div.classList.remove('dov');const from=parseInt(e.dataTransfer.getData('text/plain'));if(from!==i){const t=o.procs[from];o.procs[from]=o.procs[i];o.procs[i]=t;rProcs();}});
     div.innerHTML=bPC(p,i);list.appendChild(div);
   });
+
+  // 구분선 (일반 공정이 있을 때만)
+  if(normalProcs.length>0&&fixedProcs.length>0){
+    const sep=document.createElement('div');
+    sep.style.cssText='border-top:1px dashed #e8e8e4;margin:6px 0;';
+    list.appendChild(sep);
+  }
+
+  // 고정 공정(디자인/목형) - 완료처리 버튼만
+  fixedProcs.forEach(({p,i})=>{
+    const div=document.createElement('div');div.className='pc';
+    div.innerHTML=bPCFixed(p,i);list.appendChild(div);
+  });
+
   rFB();
   setTimeout(syncMoldSpecs,100);
 }
+
+function bPCFixed(p,i){
+  // 디자인/목형 전용 카드 - 완료처리만 가능
+  const m=PM[p.type]||{name:p.type,color:'#888',cls:'tt'};
+  const isDone=p.isDone||p.is_done||false;
+  return `<div class="pch" style="background:${isDone?'#f0fdf4':'#fafaf9'};border-radius:8px;padding:8px 12px;">
+    <span class="pb ${m.cls}">${m.name}</span>
+    <span style="font-size:13px;font-weight:500;flex:1;">${p.vendor||'미입력'}</span>
+    <span style="font-size:11px;color:#888;">공정 외 관리</span>
+    ${isDone
+      ? `<span style="background:#dcfce7;color:#16a34a;border:1px solid #86efac;border-radius:5px;padding:2px 10px;font-size:12px;font-weight:600;">✓ 완료</span>
+         <button class="btn btn-sm" onclick="toggleFixedProcDone(${i},false)" style="font-size:11px;">취소</button>`
+      : `<button class="btn btn-primary btn-sm" onclick="toggleFixedProcDone(${i},true)" style="font-size:11px;">완료처리</button>`
+    }
+  </div>
+  <div class="pcb">${bGB(p,i)}</div>`;
+}
+
+function toggleFixedProcDone(i, done){
+  const o=getEO();
+  if(!o||!o.procs[i])return;
+  o.procs[i].isDone=done;
+  o.procs[i].is_done=done;
+  if(done) o.procs[i].doneDate=new Date().toISOString().split('T')[0];
+  else o.procs[i].doneDate='';
+  rProcs();
+}
+
 function bPC(p,i){
   const m=PM[p.type]||{name:p.type,color:'#888',cls:'tt'};
   const isLast=i===(getEO()?.procs?.length||0)-1;
@@ -4167,8 +4223,18 @@ function addProc(type){
   if(SM2[type])base.subType=SM2[type];
   const o=getEO();if(!o)return;
   if(!o.procs)o.procs=[];
-  const ld=o.procs.map(p=>p.type).lastIndexOf('delivery');
-  if(ld>=0&&type!=='delivery')o.procs.splice(ld,0,base);else o.procs.push(base);
+  const FIXED=['design','mold'];
+  // 디자인/목형은 항상 맨 뒤, 일반 공정은 디자인/목형 앞에 삽입
+  if(FIXED.includes(type)){
+    o.procs.push(base);
+  } else {
+    // 배송 앞에 삽입 (기존 로직 유지)
+    const ld=o.procs.map(p=>p.type).lastIndexOf('delivery');
+    // 디자인/목형 앞에 삽입
+    const firstFixed=o.procs.findIndex(p=>FIXED.includes(p.type));
+    const insertAt=ld>=0?ld:(firstFixed>=0?firstFixed:o.procs.length);
+    o.procs.splice(insertAt,0,base);
+  }
   rProcs();toast(`${PM[type]?.name||type} 공정 추가됨`);
 }
 function togAM(){const m=document.getElementById('addmenu');if(m)m.style.display=m.style.display==='none'?'block':'none';}

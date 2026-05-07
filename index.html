@@ -4168,7 +4168,8 @@ function onRE(i,v){
 function onRouteInput(i,v){
   const p=getEO()?.procs?.[i];if(!p)return;
   p.route=v;p.routeAuto=false;
-  // 입력한 업체명이 vendor_db에 있으면 자동 공정 추가 제안
+  // 디자인/목형은 자동 공정 추가 안 함
+  if(['design','mold'].includes(p.type))return;
   if(!v)return;
   const procType=getVendorFirstProcess(v);
   if(!procType)return;

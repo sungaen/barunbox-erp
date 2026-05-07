@@ -459,7 +459,7 @@ async function syncAll(){
       api('clients','GET',null,'order=name.asc'),
       api('orders','GET',null,'order=created_at.desc&select=*,processes(*)'),
       api('jiryu_db','GET',null,'order=name.asc'),
-      api('vendor_db','GET',null,'order=name.asc'),
+      Promise.resolve([]), // vendor_db 미사용 - clients(발주처)만 사용
       api('carton_types','GET',null,'order=name.asc'),
       api('carton_stock','GET',null,'order=size.asc'),
       api('carton_movements','GET',null,'order=created_at.desc'),
@@ -470,7 +470,8 @@ async function syncAll(){
     ]);
     if(cl)DB.clients=cl;
     if(jd)DB.jiryuDB=jd.map(j=>({...j,w:j.weights||[]}));
-    if(vd){DB.vendorDB={};vd.forEach(v=>{if(!DB.vendorDB[v.process_type])DB.vendorDB[v.process_type]=[];if(!DB.vendorDB[v.process_type].includes(v.name))DB.vendorDB[v.process_type].push(v.name);});}
+    // vendorDB: clients(발주처) 기반으로만 구성
+    DB.vendorDB={};
     // clients(vendor)도 vendorDB에 보완 - 공정별 자동 dropdown
     if(cl){cl.filter(c=>c.client_type==='vendor'&&c.process_types).forEach(c=>{
       const pts=(c.process_types||'').split(',').map(s=>s.trim()).filter(Boolean);
@@ -3253,13 +3254,19 @@ function getClientRowHtml(c, clientTab){
   const ptHtml=pts.length
     ?pts.map(p=>'<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:#e8f0fe;color:#1a56c4;margin:1px;">'+(PT[p]||p)+'</span>').join('')
     :'<span style="font-size:11px;color:#ccc;">미지정</span>';
-  const gridCols=clientTab==='vendor'?'2fr 1.5fr 1fr 1fr auto':'2fr 1fr 1.2fr 2fr auto';
+  const gridCols=clientTab==='vendor'?'2fr 1.5fr 1fr 1fr auto':'2fr 1fr 1.2fr 1.2fr 1.5fr auto';
   let h='<div class="crow" style="display:grid;grid-template-columns:'+gridCols+';align-items:center;">';
   h+='<div><span style="font-size:13px;font-weight:500;">'+c.name+'</span></div>';
   if(clientTab==='vendor') h+='<div style="display:flex;flex-wrap:wrap;gap:2px;">'+ptHtml+'</div>';
   h+='<span>'+(c.contact||'-')+'</span>';
   h+='<span>'+(c.tel||'-')+'</span>';
-  if(clientTab==='buyer') h+='<span style="font-size:12px;color:#888;">'+(c.addr||'').slice(0,18)+((c.addr||'').length>18?'...':'')+'</span>';
+  if(clientTab==='buyer'){
+    // 이 거래처에 발주한 우리 담당자 목록 자동 추출
+    const myMgrs=[...new Set((DB.orders||[]).filter(o=>o.client_id===c.id&&o.manager).map(o=>o.manager))];
+    const mgrNames=myMgrs.map(mid=>{const m=MGS.find(x=>x.id===mid);return m?m.name+' '+m.title:'';}).filter(Boolean);
+    h+='<span style="font-size:11px;color:#555;">'+( mgrNames.length?mgrNames.join(', '):'<span style="color:#aaa;">-</span>')+' </span>';
+    h+='<span style="font-size:12px;color:#888;">'+(c.addr||'').slice(0,18)+((c.addr||'').length>18?'...':'')+'</span>';
+  }
   h+='<div style="display:flex;gap:4px;">';
   h+='<button class="btn btn-sm" data-cid="'+c.id+'" onclick="openClientModal(this.dataset.cid)">편집</button>';
   h+='<button class="btn btn-sm btn-danger" data-cid="'+c.id+'" onclick="delClient(this.dataset.cid)">삭제</button>';
@@ -3274,8 +3281,8 @@ function rClients(){
   const vendors=DB.clients.filter(c=>c.client_type==='vendor'||c.client_type==='발주처');
   const list=clientTab==='buyer'?buyers:vendors;
   const addLabel=clientTab==='buyer'?'+ 거래처 등록':'+ 발주처 등록';
-  const hdrCols=clientTab==='vendor'?'2fr 1.5fr 1fr 1fr auto':'2fr 1fr 1.2fr 2fr auto';
-  const hdrItems=clientTab==='vendor'?['업체명','담당 공정','담당자','연락처','']:['업체명','담당자','연락처','주소',''];
+  const hdrCols=clientTab==='vendor'?'2fr 1.5fr 1fr 1fr auto':'2fr 1fr 1.2fr 1.2fr 1.5fr auto';
+  const hdrItems=clientTab==='vendor'?['업체명','담당 공정','담당자','연락처','']:['업체명','담당자(거래처)','연락처','영업담당자','주소',''];
 
   let h='';
   // 탭
@@ -3351,6 +3358,11 @@ function openClientModal(id,typeHint){
     +'<div class="field"><label>이메일</label><input id="cl-e" value="'+(c.email||'')+'"/></div></div>'
     +'<div class="field"><label>주소</label><input id="cl-a" value="'+(c.addr||'')+'"/></div>'
     +'<div class="field"><label>메모</label><input id="cl-m" value="'+(c.memo||'')+'"/></div>'
+    +((!isVendor&&id)?(()=>{
+      const myMgrs=[...new Set((DB.orders||[]).filter(o=>o.client_id===id&&o.manager).map(o=>o.manager))];
+      const badges=myMgrs.map(mid=>{const m=MGS.find(x=>x.id===mid);return m?'<span style="background:#0369a1;color:#fff;border-radius:20px;padding:3px 10px;font-size:12px;font-weight:600;">'+m.name+' '+m.title+'</span>':''}).filter(Boolean);
+      return '<div class="field" style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px;"><label style="color:#0369a1;">📌 영업 담당자 (발주 기록 기반)</label><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">'+(badges.length?badges.join(''):'<span style="color:#aaa;font-size:12px;">발주 내역 없음</span>')+'</div></div>';
+    })():'')
     +'<div id="proc-types-section">'+ptHtml+'</div>'
     +'<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:1rem;">'
     +'<button class="btn" onclick="closeMod()">취소</button>'

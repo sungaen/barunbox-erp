@@ -1833,7 +1833,9 @@ function rVendor(){
             +'<div style="font-size:13px;font-weight:500;">'+(o.productName||o.name)+'</div>'
             +'<div style="font-size:11px;color:#888;">'+(o.clientName||'-')+' · 납기 '+(o.dd||'-')+' · '+(o.qty||0).toLocaleString()+'ea</div>'
             +'</div>'
-            +'<button class="btn btn-sm btn-success" data-oid="'+o.id+'" data-pid="'+p.id+'" onclick="completeProcAndNext(this.dataset.oid,this.dataset.pid)">✓ 완료 → 다음</button>'
+            +((['design','mold'].includes(p.type))
+              ? '<button class="btn btn-sm btn-success" data-oid="'+o.id+'" data-pid="'+p.id+'" onclick="completeFixedProc(this.dataset.oid,this.dataset.pid)">'+(p.is_done?'✓ 완료됨':'✓ 완료처리')+'</button>'
+              : '<button class="btn btn-sm btn-success" data-oid="'+o.id+'" data-pid="'+p.id+'" onclick="completeProcAndNext(this.dataset.oid,this.dataset.pid)">✓ 완료 → 다음</button>')
             +(allProcs.some(function(ap){return ap.is_done;})
               ?'<button class="btn btn-sm" data-oid="'+o.id+'" data-pid="'+p.id+'" onclick="rollbackProc(this.dataset.oid,this.dataset.pid)" style="color:#e65100;border-color:#e65100;">↩ 롤백</button>'
               :'')
@@ -1882,6 +1884,23 @@ async function rollbackProc(oid, pid){
 function togVendorById(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
 function togVendor(id){const el=document.getElementById('vd-'+id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
 function filterVendor(q){document.querySelectorAll('.vendor-card').forEach(c=>{c.style.display=q?c.textContent.includes(q)?'block':'none':'block';});}
+
+async function completeFixedProc(oid, pid){
+  // 디자인/목형 완료처리 - 다음 공정 이동 없이 완료만 처리
+  const o=DB.orders.find(x=>x.id===oid);if(!o)return;
+  const procs=o.procs||[];
+  const proc=procs.find(p=>String(p.id)===String(pid));
+  if(!proc)return;
+  const isDone=proc.is_done;
+  const today=new Date().toISOString().split('T')[0];
+  // 완료/취소 토글
+  await api('processes','PATCH',{is_done:!isDone,done_date:isDone?null:today},'id=eq.'+pid);
+  proc.is_done=!isDone;
+  proc.doneDate=isDone?'':today;
+  toast(isDone?'완료 취소됨':'✅ 완료처리됨');
+  await syncAll();
+  rVendor();
+}
 
 async function completeProcAndNext(oid,pid){
   const o=DB.orders.find(x=>x.id===oid);if(!o)return;
@@ -3780,7 +3799,20 @@ async function loadPrintAttachments(oid){
 }
 
 /* ══ 공정 빌더 ══ */
-function autoR(procs){for(let i=0;i<procs.length;i++){if(!procs[i].routeAuto)continue;procs[i].route=i<procs.length-1?'→ '+(procs[i+1].vendor||PM[procs[i+1].type]?.name||''):'';}}
+function autoR(procs){
+  const FIXED=['design','mold'];
+  // 일반 공정만 추려서 이동경로 연결 (디자인/목형 제외)
+  const normalIdx=procs.map((p,i)=>i).filter(i=>!FIXED.includes(procs[i].type));
+  for(let ni=0;ni<normalIdx.length;ni++){
+    const i=normalIdx[ni];
+    if(!procs[i].routeAuto)continue;
+    // 다음 일반 공정으로 연결
+    const nextI=normalIdx[ni+1];
+    procs[i].route=nextI!==undefined?'→ '+(procs[nextI].vendor||PM[procs[nextI].type]?.name||''):'';
+  }
+  // 디자인/목형은 이동경로 초기화
+  procs.forEach(p=>{if(FIXED.includes(p.type)&&p.routeAuto)p.route='';});
+}
 function rProcs(){
   const o=getEO();if(!o)return;
   if(!o.procs)o.procs=[];
@@ -3810,10 +3842,14 @@ function rProcs(){
     list.appendChild(sep);
   }
 
-  // 고정 공정(디자인/목형) - 완료처리 버튼만
+  // 고정 공정(디자인/목형) - 기존 bPC 그대로 사용 (이동경로 등 유지)
   fixedProcs.forEach(({p,i})=>{
-    const div=document.createElement('div');div.className='pc';
-    div.innerHTML=bPCFixed(p,i);list.appendChild(div);
+    const div=document.createElement('div');div.className='pc';div.draggable=true;
+    div.addEventListener('dragstart',e=>e.dataTransfer.setData('text/plain',String(i)));
+    div.addEventListener('dragover',e=>{e.preventDefault();div.classList.add('dov');});
+    div.addEventListener('dragleave',()=>div.classList.remove('dov'));
+    div.addEventListener('drop',e=>{e.preventDefault();div.classList.remove('dov');const from=parseInt(e.dataTransfer.getData('text/plain'));if(from!==i){const t=o.procs[from];o.procs[from]=o.procs[i];o.procs[i]=t;rProcs();}});
+    div.innerHTML=bPC(p,i);list.appendChild(div);
   });
 
   rFB();

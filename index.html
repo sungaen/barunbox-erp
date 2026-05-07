@@ -3908,7 +3908,7 @@ function bJB(p,i){
   const rt=p.routeAuto?`<span class="ra">자동</span>`:`<span class="rm">수동</span>`;
   return `<div class="g2" style="margin-bottom:8px;">
     <div><label>지류 유통사</label>
-      <select onchange="onV(${i},this.value)">${vO}<option value="__d__" ${isDirect?'selected':''}>직접 입력...</option></select>
+      <select tabindex="0" onchange="onV(${i},this.value)">${vO}<option value="__d__" ${isDirect?'selected':''}>직접 입력...</option></select>
       ${!isDirect?`<button type="button" onclick="onVDBtn(${i})" style="font-size:10px;padding:1px 7px;border:1px solid #d0d0cc;border-radius:4px;background:#fff;color:#888;cursor:pointer;margin-top:3px;display:block;">✏ 직접 입력</button>`:''}
       ${isDirect?`<div class="dw"><input value="${p.vendor||''}" placeholder="유통사 입력" id="vd-inp-${i}" oninput="onVDirect(${i},this.value)" onblur="onJVD(${i},this.value)"/></div>`:''}</div>
     <div><label>완료요청일 <span style="color:#aaa;">(선택)</span></label>
@@ -3918,25 +3918,25 @@ function bJB(p,i){
     <div style="font-size:11px;font-weight:600;color:#888;margin-bottom:7px;">지류 사양</div>
     <div class="jr">
       <div style="min-width:120px;"><label>지류 선택</label>
-        <select onchange="onJT(${i},this.value)">${DB.jiryuDB.map(j=>`<option ${p.jt===j.name?'selected':''}>${j.name}</option>`).join('')}
+        <select tabindex="0" onchange="onJT(${i},this.value)">${DB.jiryuDB.map(j=>`<option ${p.jt===j.name?'selected':''}>${j.name}</option>`).join('')}
           <option value="__new__">+ 새 지류 추가</option></select></div>
       ${!isG?`<div style="min-width:75px;"><label>평량(g)</label>
-        <select id="wsel-${i}" onchange="onWeightSel(${i},this.value)">${wO}<option value="__d__" ${p.weightDirect?'selected':''}>직접...</option></select>
+        <select id="wsel-${i}" tabindex="0" onchange="onWeightSel(${i},this.value)">${wO}<option value="__d__" ${p.weightDirect?'selected':''}>직접...</option></select>
         ${p.weightDirect?`<input type="number" style="width:65px;margin-top:3px;" value="${p.weight||''}" placeholder="g" id="wdirect-${i}" oninput="onWeightDirectInput(${i},this.value)" onchange="onWeightDirectInput(${i},this.value)"/>`:''}
         </div>`:''}
       <span class="ju">·</span>
-      <div style="min-width:62px;"><label>가로</label><input type="number" value="${p.w||''}" placeholder="720" onchange="onJW(${i},this.value)"/></div>
+      <div style="min-width:62px;"><label>가로</label><input type="number" value="${p.w||''}" placeholder="720" tabindex="0" onchange="onJW(${i},this.value)"/></div>
       <span class="ju">×</span>
-      <div style="min-width:62px;"><label>세로</label><input type="number" value="${p.h||''}" placeholder="393" onchange="onJH(${i},this.value)"/></div>
+      <div style="min-width:62px;"><label>세로</label><input type="number" value="${p.h||''}" placeholder="393" tabindex="0" onchange="onJH(${i},this.value)"/></div>
 
       <span class="ju">=</span>
-      <div style="min-width:62px;"><label>수량(매)</label><input type="number" value="${p.qty||''}" placeholder="800" onchange="onJQ(${i},this.value)"/></div>
+      <div style="min-width:62px;"><label>수량(매)</label><input type="number" value="${p.qty||''}" placeholder="800" tabindex="0" onchange="onJQ(${i},this.value)"/></div>
     </div>
     ${wSz?`<div style="font-size:11px;color:#c0392b;background:#fff5f5;padding:3px 8px;border-radius:4px;margin-bottom:4px;">⚠ 단변 393mm 미만 — 인쇄 시 문제가 발생할 수 있어요</div>`:''}
     ${wQt?`<div style="font-size:11px;color:#c16200;background:#fff3e0;padding:3px 8px;border-radius:4px;margin-bottom:4px;">⚠ 지류정매보다 30% 이상 많아요</div>`:''}
     <div class="jp">${bJP(p)}</div>
   </div>
-  <div class="g2"><div><label>특이사항</label><input value="${p.note||''}" placeholder="주의사항 등" onchange="sP(${i},'note',this.value)"/></div>
+  <div class="g2"><div><label>특이사항</label><input value="${p.note||''}" placeholder="주의사항 등" tabindex="0" onchange="sP(${i},'note',this.value)"/></div>
     ${rFld(p,i)}</div>`;
 }
 function bJP(p){
@@ -4120,7 +4120,15 @@ function onJT(i,v){
   if(v==='__new__'){
     const n=prompt('새 지류명:');
     if(!n){rProcs();return;}
-    api('jiryu_db','POST',{name:n,weights:[]}).then(r=>{if(r&&r[0])DB.jiryuDB.push({...r[0],w:[]});});
+    api('jiryu_db','POST',{name:n,weights:[]}).then(r=>{
+      if(r&&r[0]){
+        DB.jiryuDB.push({...r[0],w:[]});
+        // 추가 후 해당 공정 지류값 세팅 + 즉시 렌더링
+        const p=getEO()?.procs?.[i];
+        if(p){p.jt=n;p.weight=0;p.weightDirect=true;}
+        rProcs();
+      }
+    });
     v=n;
     toast(`"${n}" DB 추가`);
   }

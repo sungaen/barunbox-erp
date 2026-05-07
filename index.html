@@ -3541,7 +3541,7 @@ function openReorderModal(){
         +'</div>'
         +'<span style="font-size:12px;">'+(o.procs||[]).map(function(p){return PM[p.type]?.name||'';}).join('→')+'</span>'
         +'<span>'+(o.qty||0).toLocaleString()+'ea</span>'
-        +'<div style="display:flex;gap:4px;">'        +'<button class="btn btn-sm btn-primary" onclick="doReorder(this.closest(\'.crow\').dataset.oid)">↻ 재발주</button>'        +'<button class="btn btn-sm" style="background:#16a34a;color:#fff;border-color:#16a34a;" onclick="doReorderAsNew(this.closest(\'.crow\').dataset.oid)">+ 신규 등록</button>'        +'</div>'
+        +'<div style="display:flex;gap:4px;">'        +'<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();doReorder(this.closest(\'.crow\').dataset.oid)">↻ 재발주</button>'        +'<button class="btn btn-sm" style="background:#16a34a;color:#fff;border-color:#16a34a;" onclick="event.stopPropagation();doReorderAsNew(this.closest(\'.crow\').dataset.oid)">+ 신규 등록</button>'        +'</div>'
         +'</div>';
     }).join('')
     +'</div>');

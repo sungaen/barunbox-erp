@@ -1906,15 +1906,32 @@ async function completeProcAndNext(oid,pid){
   const o=DB.orders.find(x=>x.id===oid);if(!o)return;
   const procs=o.procs||[];
   const idx=procs.findIndex(p=>p.id===pid);if(idx<0)return;
+  const completedProc=procs[idx];
   await api('processes','PATCH',{is_done:true},`id=eq.${pid}`);
   procs[idx].is_done=true;
 
   // 완료 후 활성 공정 재계산
   const allDone=procs.every(p=>p.is_done);
+  // delivery 제외 실제 생산 공정만 기준으로 마지막 완료 여부 체크
+  const prodProcs=procs.filter(p=>p.type!=='delivery');
+  const allProdDone=prodProcs.every(p=>p.is_done);
+
+  // ── 카톤 재고 차감 로직 ──
+  // 조건: 톰슨/접착/싸바리/조립 공정 완료 + 발주에 카톤 정보 있음 + 모든 생산 공정 완료
+  const CARTON_PROC_TYPES=['thomson','jeopchak','ssabari','assembly'];
+  if(CARTON_PROC_TYPES.includes(completedProc.type) && allProdDone){
+    await consumeCartonForOrder(o, completedProc);
+  }
+
   if(allDone){
     await api('orders','PATCH',{status:'생산완료대기'},`id=eq.${oid}`);
     o.status='생산완료대기';
     toast('🎉 모든 공정 완료! 생산완료대기로 변경됐어요.');
+  } else if(allProdDone){
+    // 생산 공정은 모두 완료, delivery만 남은 경우
+    await api('orders','PATCH',{status:'생산완료대기'},`id=eq.${oid}`);
+    o.status='생산완료대기';
+    toast('🎉 생산 완료! 생산완료대기로 변경됐어요.');
   } else {
     const nextActives=getActiveProcs(procs);
     const p=procs[idx];
@@ -1935,6 +1952,73 @@ async function completeProcAndNext(oid,pid){
   }
   rVendor();
   if(curTab==='list')rList();
+}
+
+// 발주 완료 시 발주처 카톤 재고 차감
+async function consumeCartonForOrder(o, completedProc){
+  // 발주에 카톤 사이즈 정보 없으면 스킵
+  const cartonSize=o.carton_size||o.size||'';
+  const cartonQty=o.carton_qty||0;
+  if(!cartonSize||!cartonQty){return;}
+
+  // carton_stock에서 사이즈 매칭
+  const stock=DB.cartonStock.find(s=>s.size===cartonSize);
+  if(!stock){
+    console.warn('[카톤차감] 사이즈 매칭 실패:', cartonSize);
+    return;
+  }
+
+  // 완료된 공정의 vendor (발주처)
+  const vendor=completedProc.vendor||'';
+  if(!vendor){
+    console.warn('[카톤차감] vendor 없음');
+    return;
+  }
+
+  // carton_vendor_stock에서 해당 발주처 재고 확인
+  const vendorStock=DB.cartonVendorStock.find(
+    v=>v.carton_stock_id===stock.id && v.vendor===vendor
+  );
+  if(!vendorStock){
+    console.warn('[카톤차감] 발주처 카톤 재고 없음:', vendor, cartonSize);
+    toast('⚠️ '+vendor+' 카톤 재고 정보 없음 (차감 불가)');
+    return;
+  }
+
+  const newQty=Math.max(0, (vendorStock.qty||0)-cartonQty);
+  const today=new Date().toISOString().split('T')[0];
+
+  // 1) carton_vendor_stock 차감
+  await api('carton_vendor_stock','PATCH',
+    {qty:newQty, updated_at:new Date().toISOString()},
+    'id=eq.'+vendorStock.id
+  );
+
+  // 2) carton_movements에 이력 기록
+  await api('carton_movements','POST',{
+    carton_stock_id:stock.id,
+    move_type:'consume',
+    qty:cartonQty,
+    move_date:today,
+    vendor:vendor,
+    order_id:o.id,
+    note:'공정완료 자동차감 ('+( o.productName||o.name||'')+' '+cartonQty+'개)'
+  });
+
+  // 로컬 DB 업데이트
+  vendorStock.qty=newQty;
+  if(!DB.cartonMovements)DB.cartonMovements=[];
+  DB.cartonMovements.push({
+    carton_stock_id:stock.id,
+    move_type:'consume',
+    qty:cartonQty,
+    move_date:today,
+    vendor,
+    order_id:o.id,
+    note:'공정완료 자동차감'
+  });
+
+  toast('📦 카톤 차감: '+vendor+' '+cartonSize+' '+cartonQty.toLocaleString()+'개 → 잔여 '+newQty.toLocaleString()+'개');
 }
 
 async function toggleProcDone(oid,pid,done){
@@ -3077,7 +3161,7 @@ async function cartonOrderComplete(orderId){
 async function openCartonHistory(stockId){
   const stock=DB.cartonStock.find(s=>s.id===stockId);
   const movements=(DB.cartonMovements||[]).filter(m=>m.carton_stock_id===stockId);
-  const typeLabel={in:'📥 입고',out:'📤 출고',transfer:'↗ 발주처 이동'};
+  const typeLabel={in:'📥 입고',out:'📤 출고',transfer:'↗ 발주처 이동',consume:'🔧 공정소진'};
   openMod(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
     <span style="font-size:15px;font-weight:600;">📋 이력 - ${stock?.size}</span>
     <button class="btn btn-sm" onclick="closeMod()">닫기</button>

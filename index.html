@@ -1769,6 +1769,17 @@ function getCurProc(procs){
   const a=getActiveProcs(procs);
   return a.length?a[0]:null;
 }
+function restoreVendorState(){
+  if(!window._openVendorIds||!window._openVendorIds.size)return;
+  window._openVendorIds.forEach(function(id){
+    const el=document.getElementById(id);
+    if(el){
+      el.style.display='block';
+      const arrow=el.previousElementSibling?.querySelector('span:last-child');
+      if(arrow)arrow.textContent='▼';
+    }
+  });
+}
 function rVendor(){
   const el=document.getElementById('panel-vendor');
   const vendorMap={};
@@ -1854,45 +1865,40 @@ function rVendor(){
 async function rollbackProc(oid, pid){
   const o=DB.orders.find(x=>x.id===oid);if(!o)return;
   const procs=o.procs||[];
-  const curIdx=procs.findIndex(p=>p.id===pid);if(curIdx<0)return;
 
-  // 이전에 완료된 공정 찾기 (현재 공정보다 앞에 있고 is_done=true인 것)
-  const prevDone=procs.slice(0,curIdx).filter(p=>p.is_done);
-  if(!prevDone.length){toast('롤백할 이전 공정이 없어요.');return;}
+  // 디자인/목형 제외하고 가장 마지막으로 완료된 공정 찾기
+  const doneProdProcs=procs.filter(p=>p.is_done&&p.type!=='design'&&p.type!=='mold');
+  if(!doneProdProcs.length){toast('롤백할 완료 공정이 없어요.');return;}
 
-  const lastDone=prevDone[prevDone.length-1];
-  if(!confirm('['+( PM[lastDone.type]?.name||lastDone.type)+(lastDone.vendor?' · '+lastDone.vendor:'')+'] 공정을 완료 취소하고 롤백할까요?'))return;
+  const lastDone=doneProdProcs[doneProdProcs.length-1];
+  if(!confirm('['+( PM[lastDone.type]?.name||lastDone.type)+(lastDone.vendor?' · '+lastDone.vendor:'')+'] 공정 완료를 취소하고 롤백할까요?'))return;
 
-  // 이전 완료 공정 → is_done=false 로 롤백
-  await api('processes','PATCH',{is_done:false},'id=eq.'+lastDone.id);
+  // 완료 취소
+  await api('processes','PATCH',{is_done:false,done_date:null},'id=eq.'+lastDone.id);
   lastDone.is_done=false;
+  lastDone.doneDate='';
 
-  // 발주 상태도 업데이트
-  const allDone=procs.every(p=>p.is_done);
-  const anyDone=procs.some(p=>p.is_done);
-  const newStatus=allDone?'생산완료대기':anyDone?'진행중':'대기';
-  if(o.status==='생산완료대기'||o.status==='출고완료'){
+  // 발주 상태 업데이트
+  const anyProdDone=procs.some(p=>p.is_done&&p.type!=='design'&&p.type!=='mold');
+  const newStatus=anyProdDone?'진행중':'대기';
+  if(o.status==='생산완료대기'||o.status==='진행중'||o.status==='출고완료'){
     await api('orders','PATCH',{status:newStatus},'id=eq.'+oid);
     o.status=newStatus;
   }
 
   toast('↩ ['+(PM[lastDone.type]?.name||lastDone.type)+'] 공정 롤백됐어요.');
-  rVendor();
+  rVendor();restoreVendorState();
   if(curTab==='list')rList();
 }
 
 function togVendorById(id){
-  const el=document.getElementById(id);
-  if(!el)return;
+  const el=document.getElementById(id);if(!el)return;
   const opening=el.style.display==='none';
   el.style.display=opening?'block':'none';
-  // 열린 상태 저장
   if(!window._openVendorIds)window._openVendorIds=new Set();
   if(opening)window._openVendorIds.add(id);
   else window._openVendorIds.delete(id);
-  // 화살표 회전
-  const hdr=el.previousElementSibling;
-  const arrow=hdr?.querySelector('span:last-child');
+  const arrow=el.previousElementSibling?.querySelector('span:last-child');
   if(arrow)arrow.textContent=opening?'▼':'▶';
 }
 function togVendor(id){const el=document.getElementById('vd-'+id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
@@ -1912,14 +1918,7 @@ async function completeFixedProc(oid, pid){
   proc.doneDate=isDone?'':today;
   toast(isDone?'완료 취소됨':'✅ 완료처리됨');
   await syncAll();
-  rVendor();
-  // 열린 드롭다운 상태 복원
-  if(window._openVendorIds&&window._openVendorIds.size>0){
-    window._openVendorIds.forEach(function(id){
-      const el=document.getElementById(id);
-      if(el){el.style.display='block';const hdr=el.previousElementSibling;const arrow=hdr?.querySelector('span:last-child');if(arrow)arrow.textContent='▼';}
-    });
-  }
+  rVendor();restoreVendorState();
 }
 
 async function completeProcAndNext(oid,pid){
@@ -1953,7 +1952,7 @@ async function completeProcAndNext(oid,pid){
       toast('✓ 완료 처리됐어요');
     }
   }
-  rVendor();
+  rVendor();restoreVendorState();
   if(curTab==='list')rList();
 }
 
@@ -1962,7 +1961,7 @@ async function toggleProcDone(oid,pid,done){
   const o=DB.orders.find(x=>x.id===oid);
   if(o){const p=o.procs.find(x=>x.id===pid);if(p)p.is_done=done;}
   toast(done?'완료 처리됐어요':'완료 취소됐어요');
-  rVendor();
+  rVendor();restoreVendorState();
   if(curTab==='list')rList();
 }
 

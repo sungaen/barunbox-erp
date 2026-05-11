@@ -1881,7 +1881,20 @@ async function rollbackProc(oid, pid){
   if(curTab==='list')rList();
 }
 
-function togVendorById(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
+function togVendorById(id){
+  const el=document.getElementById(id);
+  if(!el)return;
+  const opening=el.style.display==='none';
+  el.style.display=opening?'block':'none';
+  // 열린 상태 저장
+  if(!window._openVendorIds)window._openVendorIds=new Set();
+  if(opening)window._openVendorIds.add(id);
+  else window._openVendorIds.delete(id);
+  // 화살표 회전
+  const hdr=el.previousElementSibling;
+  const arrow=hdr?.querySelector('span:last-child');
+  if(arrow)arrow.textContent=opening?'▼':'▶';
+}
 function togVendor(id){const el=document.getElementById('vd-'+id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
 function filterVendor(q){document.querySelectorAll('.vendor-card').forEach(c=>{c.style.display=q?c.textContent.includes(q)?'block':'none':'block';});}
 
@@ -1900,6 +1913,13 @@ async function completeFixedProc(oid, pid){
   toast(isDone?'완료 취소됨':'✅ 완료처리됨');
   await syncAll();
   rVendor();
+  // 열린 드롭다운 상태 복원
+  if(window._openVendorIds&&window._openVendorIds.size>0){
+    window._openVendorIds.forEach(function(id){
+      const el=document.getElementById(id);
+      if(el){el.style.display='block';const hdr=el.previousElementSibling;const arrow=hdr?.querySelector('span:last-child');if(arrow)arrow.textContent='▼';}
+    });
+  }
 }
 
 async function completeProcAndNext(oid,pid){
@@ -3578,16 +3598,18 @@ function filterReorder(q){
     row.style.display=q?row.textContent.includes(q)?'grid':'none':'grid';
   });
 }
-async function doReorder(oid){
+function doReorder(oid){
   const o=DB.orders.find(x=>x.id===oid);if(!o)return;
   closeMod();
   const copy=JSON.parse(JSON.stringify(o));
+  // 스냅샷: 원본 공정 구성 저장 (변경 감지용)
   copy._srcId=oid;
   copy._srcSnapshot={
     procs:JSON.stringify((o.procs||[]).map(function(p){
       return {type:p.type,vendor:(p.vendor||'').trim()};
     })),
   };
+  // 무조건 새 ID → 독립 발주서
   copy.id=null;
   copy.is_reorder=true;
   copy.src_order_id=oid;
@@ -3598,39 +3620,16 @@ async function doReorder(oid){
   copy.shipped_date=null;
   copy.project_id=null;
   copy.project_name=null;
+  // 공정 초기화: 새 임시 id + is_done 리셋
   copy.procs=(copy.procs||[]).map(function(p,i){
-    return Object.assign({},p,{id:'tmp_'+Date.now()+'_'+i,is_done:false,order_id:null});
+    return Object.assign({},p,{
+      id:'tmp_'+Date.now()+'_'+i,
+      is_done:false,
+      order_id:null
+    });
   });
   window._editOrder=copy;
-
-  // 원본 발주에 연결된 목형을 mold_movements에서 조회 → _linkedMolds 자동 세팅
-  window._linkedMolds={};
-  try{
-    const mvs=await api('mold_movements','GET',null,'order_id=eq.'+oid+'&order=id.asc');
-    if(mvs&&mvs.length){
-      // 중복 제거: mold_id별 최초 1개만
-      const seen=new Set();
-      const linkedIds=[];
-      mvs.forEach(mv=>{if(!seen.has(mv.mold_id)){seen.add(mv.mold_id);linkedIds.push(mv.mold_id);}});
-      // 목형 상세 조회
-      if(linkedIds.length){
-        const moldRes=await api('molds','GET',null,'id=in.('+linkedIds.join(',')+')');
-        if(moldRes&&moldRes.length){
-          // calSpecs 수에 맞게 순서대로 매핑 (표지/이면 순)
-          moldRes.forEach((m,idx)=>{window._linkedMolds[idx]=m;});
-          toast('🗂 원본 목형 '+moldRes.length+'개 자동 연결됨 (기존목형으로 처리)');
-        }
-      }
-    }
-  }catch(e){console.warn('[재발주] 목형 자동연결 실패',e);}
-
-  // 목형 공정 subType을 자동으로 '기존목형'으로 세팅
-  if(Object.keys(window._linkedMolds).length>0){
-    const moldProc=window._editOrder.procs.find(p=>p.type==='mold');
-    if(moldProc) moldProc.subType='기존목형';
-  }
-
-  openOrderForm(null);
+  openOrderForm(null); // null → 신규 발주 폼 (새 ID 생성)
   toast('📋 재발주 — 날짜/내용 수정 후 저장하세요.');
 }
 

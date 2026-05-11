@@ -902,10 +902,11 @@ function openOrderForm(oid){
       <div class="g2">
         <div class="field"><label>납품처</label><input id="eq-da" value="${o.da||''}" placeholder="주소 또는 추후 통보"/></div>
         <div class="field"><label>카톤 박스</label>
-          <select id="eq-carton">
+          <select id="eq-carton" onchange="(function(sel){const ct=DB.cartonTypes.find(c=>String(c.id)===sel.value);const sz=ct?(ct.size||ct.name||''):'';document.getElementById('eq-carton-size').value=sz;})(this)">
             <option value="">선택 안 함</option>
             ${DB.cartonTypes.map(c=>'<option value="'+c.id+'" '+(o.carton_type_id===c.id?'selected':'')+'>'+c.name+' (재고:'+c.stock+')</option>').join('')}
           </select>
+          <input type="hidden" id="eq-carton-size" value="${(()=>{if(o.carton_size)return o.carton_size;if(o.carton_type_id){const ct=DB.cartonTypes.find(c=>String(c.id)===String(o.carton_type_id));return ct?(ct.size||ct.name||''):''}return ''})()}"/>
         </div>
 
         <div class="field" style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:8px;padding:10px 12px;margin-top:6px;">
@@ -1906,12 +1907,22 @@ async function completeProcAndNext(oid,pid){
   const o=DB.orders.find(x=>x.id===oid);if(!o)return;
   const procs=o.procs||[];
   const idx=procs.findIndex(p=>p.id===pid);if(idx<0)return;
+  const completedProc=procs[idx];
   await api('processes','PATCH',{is_done:true},`id=eq.${pid}`);
   procs[idx].is_done=true;
 
-  // 완료 후 활성 공정 재계산
+  // delivery 제외 실제 생산 공정 기준으로 완료 여부 체크
+  const prodProcs=procs.filter(p=>p.type!=='delivery');
+  const allProdDone=prodProcs.every(p=>p.is_done);
   const allDone=procs.every(p=>p.is_done);
-  if(allDone){
+
+  // ── 카톤 재고 차감: 톰슨/접착/싸바리/조립이 완료되고 모든 생산공정 완료 시 ──
+  const CARTON_PROC_TYPES=['thomson','jeopchak','ssabari','assembly'];
+  if(CARTON_PROC_TYPES.includes(completedProc.type) && allProdDone){
+    await consumeCartonForOrder(o, completedProc);
+  }
+
+  if(allDone || allProdDone){
     await api('orders','PATCH',{status:'생산완료대기'},`id=eq.${oid}`);
     o.status='생산완료대기';
     toast('🎉 모든 공정 완료! 생산완료대기로 변경됐어요.');
@@ -1919,9 +1930,7 @@ async function completeProcAndNext(oid,pid){
     const nextActives=getActiveProcs(procs);
     const p=procs[idx];
     const rt=(p.route||'').replace(/^→\s*/,'').trim();
-    // 내가 route한 대상이 아직 다른 공정을 기다리는지 확인 (원단 대기)
     const waitingFor=nextActives.filter(np=>{
-      // 방금 완료한 공정과 같은 type의 미완료가 아직 있으면 원단 대기
       return np.type===p.type&&!np.is_done&&np.id!==pid;
     });
     if(waitingFor.length>0){
@@ -1935,6 +1944,66 @@ async function completeProcAndNext(oid,pid){
   }
   rVendor();
   if(curTab==='list')rList();
+}
+
+// 발주 완료 시 발주처 카톤 재고 차감
+async function consumeCartonForOrder(o, completedProc){
+  const cartonQty=o.carton_qty||0;
+  if(!cartonQty){console.warn('[카톤차감] carton_qty 없음');return;}
+
+  // 사이즈 확인: carton_size → carton_type_id → carton_types.size 순으로 조회
+  let cartonSize=o.carton_size||'';
+  if(!cartonSize && o.carton_type_id){
+    const ctype=DB.cartonTypes.find(c=>String(c.id)===String(o.carton_type_id));
+    if(ctype) cartonSize=ctype.size||ctype.name||'';
+  }
+  if(!cartonSize){console.warn('[카톤차감] 사이즈 확인 불가');return;}
+
+  // carton_stock 사이즈 매칭
+  const stock=DB.cartonStock.find(s=>s.size===cartonSize);
+  if(!stock){
+    toast('⚠️ 카톤 재고 ['+cartonSize+'] 없음 — 재고 현황에서 박스 종류를 추가해주세요');
+    return;
+  }
+
+  // 완료 공정의 발주처(vendor)
+  const vendor=completedProc.vendor||'';
+  if(!vendor){console.warn('[카톤차감] vendor 없음');return;}
+
+  // 발주처 카톤 재고 확인
+  const vendorStock=DB.cartonVendorStock.find(
+    v=>v.carton_stock_id===stock.id && v.vendor===vendor
+  );
+  if(!vendorStock){
+    toast('⚠️ '+vendor+' ['+cartonSize+'] 카톤 재고 없음 — 발주처 이동 먼저 해주세요');
+    return;
+  }
+
+  const newQty=Math.max(0,(vendorStock.qty||0)-cartonQty);
+  const today=new Date().toISOString().split('T')[0];
+
+  // 1) carton_vendor_stock 차감
+  await api('carton_vendor_stock','PATCH',
+    {qty:newQty,updated_at:new Date().toISOString()},
+    'id=eq.'+vendorStock.id
+  );
+  // 2) 이력 기록
+  await api('carton_movements','POST',{
+    carton_stock_id:stock.id,
+    move_type:'consume',
+    qty:cartonQty,
+    move_date:today,
+    vendor:vendor,
+    order_id:o.id,
+    note:'공정완료 자동차감 ('+(o.productName||o.name||'')+' '+cartonQty+'개)'
+  });
+
+  // 로컬 업데이트
+  vendorStock.qty=newQty;
+  if(!DB.cartonMovements)DB.cartonMovements=[];
+  DB.cartonMovements.push({carton_stock_id:stock.id,move_type:'consume',qty:cartonQty,move_date:today,vendor,order_id:o.id,note:'공정완료 자동차감'});
+
+  toast('📦 카톤 차감: '+vendor+' ['+cartonSize+'] '+cartonQty.toLocaleString()+'개 → 잔여 '+newQty.toLocaleString()+'개');
 }
 
 async function toggleProcDone(oid,pid,done){
@@ -3077,7 +3146,7 @@ async function cartonOrderComplete(orderId){
 async function openCartonHistory(stockId){
   const stock=DB.cartonStock.find(s=>s.id===stockId);
   const movements=(DB.cartonMovements||[]).filter(m=>m.carton_stock_id===stockId);
-  const typeLabel={in:'📥 입고',out:'📤 출고',transfer:'↗ 발주처 이동'};
+  const typeLabel={in:'📥 입고',out:'📤 출고',transfer:'↗ 발주처 이동',consume:'🔧 공정소진'};
   openMod(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
     <span style="font-size:15px;font-weight:600;">📋 이력 - ${stock?.size}</span>
     <button class="btn btn-sm" onclick="closeMod()">닫기</button>
@@ -4267,9 +4336,8 @@ function addProc(type){
   const o=getEO();if(!o)return;
   if(!o.procs)o.procs=[];
   const FIXED=['design','mold'];
-  // 디자인/목형은 이미 기본 포함되어 있으므로 중복 추가 방지
+  // 디자인/목형은 항상 맨 뒤, 일반 공정은 디자인/목형 앞에 삽입
   if(FIXED.includes(type)){
-    if(o.procs.some(p=>p.type===type)){toast((PM[type]?.name||type)+' 공정은 이미 추가되어 있어요');return;}
     o.procs.push(base);
   } else {
     // 배송 앞에 삽입 (기존 로직 유지)

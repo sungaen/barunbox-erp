@@ -1092,38 +1092,25 @@ async function autoCreateMolds(savedOid, eo, specs, clName, prodName){
   const thomsonVendor=tproc.length>0?tproc[0].vendor:'창고';
   const linkedMolds=window._linkedMolds||{};
 
-  // 목형 공정 subType 확인 (기존목형이면 신규 생성 안 함)
-  const moldProc=(eo.procs||[]).find(p=>p.type==='mold');
-  const moldSubType=moldProc?.subType||moldProc?.sub_type||'신규목형';
-  const isNewMold=moldSubType==='신규목형'||moldSubType==='목형 수정';
-
   for(let si=0;si<specs.length;si++){
     const sp=specs[si];
-    // 수동 연결된 목형(칼규격에서 불러오기) → 위치 이동만, 신규 생성 안 함
+    // 수동 연결된 목형 → 위치 이동만
     if(linkedMolds[si]){
       const lm=linkedMolds[si];
       if(lm.current_location!==thomsonVendor){
         await api('mold_movements','POST',{mold_id:lm.id,location:thomsonVendor,moved_date:today,reason:'발주연동',order_id:savedOid});
         await api('molds','PATCH',{current_location:thomsonVendor},'id=eq.'+lm.id);
         toast('🗂 목형 #'+lm.id+' → '+thomsonVendor+' 이동');
-      } else {
-        toast('🗂 목형 #'+lm.id+' 위치 유지 ('+thomsonVendor+')');
       }
       continue;
     }
     // 칼규격이 없으면 스킵
     if(!sp.w||!sp.h)continue;
 
-    // 기존목형이면 신규 DB 생성 안 함 (수동 연결도 없으면 경고만)
-    if(!isNewMold){
-      console.info('[목형] 기존목형 subType='+moldSubType+' → 신규 생성 스킵 (칼규격에서 목형을 연결해주세요)');
-      continue;
-    }
-
-    // 신규목형/목형 수정 → 신규 생성
     const moldCount=hasSsabari?2:1;
     for(let mi=0;mi<moldCount;mi++){
       const moldSuffix=moldCount>1?(mi===0?' (표지)':' (이면)'):'';
+      // 품명: 제품명 + 칼규격 제목(있으면)
       const moldTitle=sp.title?prodName+' '+sp.title:prodName;
       const sizeStr=sp.w+'*'+sp.h+(sp.jo&&sp.jo!=='1'?'['+sp.jo+'조]':'');
       const moldData={
@@ -1350,11 +1337,8 @@ async function saveOrder(oid){
       }
     }
 
-    // 2) 수동 연결 없을 때: 신규목형인 경우에만 client+product로 목형 자동 매칭
-    const _moldProc2=(_eo.procs||[]).find(p=>p.type==='mold');
-    const _moldSubType2=_moldProc2?.subType||_moldProc2?.sub_type||'신규목형';
-    const _isNewMold2=_moldSubType2==='신규목형'||_moldSubType2==='목형 수정';
-    if(manualIds.size===0&&_thomsonV&&_thomsonV!=='창고'&&_isNewMold2){
+    // 2) 수동 연결 없을 때: 이 발주의 client+product로 목형 자동 매칭
+    if(manualIds.size===0&&_thomsonV&&_thomsonV!=='창고'){
       const _clName=DB.clients.find(x=>x.id===(_eo.client_id||_eo.clientId))?.name||_eo.clientName||_eo.client_name||'';
       const _pName=_eo.productName||_eo.product_name||_eo.name||'';
       if(_clName&&_pName){
@@ -3594,18 +3578,16 @@ function filterReorder(q){
     row.style.display=q?row.textContent.includes(q)?'grid':'none':'grid';
   });
 }
-function doReorder(oid){
+async function doReorder(oid){
   const o=DB.orders.find(x=>x.id===oid);if(!o)return;
   closeMod();
   const copy=JSON.parse(JSON.stringify(o));
-  // 스냅샷: 원본 공정 구성 저장 (변경 감지용)
   copy._srcId=oid;
   copy._srcSnapshot={
     procs:JSON.stringify((o.procs||[]).map(function(p){
       return {type:p.type,vendor:(p.vendor||'').trim()};
     })),
   };
-  // 무조건 새 ID → 독립 발주서
   copy.id=null;
   copy.is_reorder=true;
   copy.src_order_id=oid;
@@ -3616,16 +3598,39 @@ function doReorder(oid){
   copy.shipped_date=null;
   copy.project_id=null;
   copy.project_name=null;
-  // 공정 초기화: 새 임시 id + is_done 리셋
   copy.procs=(copy.procs||[]).map(function(p,i){
-    return Object.assign({},p,{
-      id:'tmp_'+Date.now()+'_'+i,
-      is_done:false,
-      order_id:null
-    });
+    return Object.assign({},p,{id:'tmp_'+Date.now()+'_'+i,is_done:false,order_id:null});
   });
   window._editOrder=copy;
-  openOrderForm(null); // null → 신규 발주 폼 (새 ID 생성)
+
+  // 원본 발주에 연결된 목형을 mold_movements에서 조회 → _linkedMolds 자동 세팅
+  window._linkedMolds={};
+  try{
+    const mvs=await api('mold_movements','GET',null,'order_id=eq.'+oid+'&order=id.asc');
+    if(mvs&&mvs.length){
+      // 중복 제거: mold_id별 최초 1개만
+      const seen=new Set();
+      const linkedIds=[];
+      mvs.forEach(mv=>{if(!seen.has(mv.mold_id)){seen.add(mv.mold_id);linkedIds.push(mv.mold_id);}});
+      // 목형 상세 조회
+      if(linkedIds.length){
+        const moldRes=await api('molds','GET',null,'id=in.('+linkedIds.join(',')+')');
+        if(moldRes&&moldRes.length){
+          // calSpecs 수에 맞게 순서대로 매핑 (표지/이면 순)
+          moldRes.forEach((m,idx)=>{window._linkedMolds[idx]=m;});
+          toast('🗂 원본 목형 '+moldRes.length+'개 자동 연결됨 (기존목형으로 처리)');
+        }
+      }
+    }
+  }catch(e){console.warn('[재발주] 목형 자동연결 실패',e);}
+
+  // 목형 공정 subType을 자동으로 '기존목형'으로 세팅
+  if(Object.keys(window._linkedMolds).length>0){
+    const moldProc=window._editOrder.procs.find(p=>p.type==='mold');
+    if(moldProc) moldProc.subType='기존목형';
+  }
+
+  openOrderForm(null);
   toast('📋 재발주 — 날짜/내용 수정 후 저장하세요.');
 }
 

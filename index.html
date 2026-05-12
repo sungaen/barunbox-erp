@@ -741,6 +741,17 @@ function openOrderForm(oid){
     o={id:null,clientName:'',client_id:null,company:'c1',manager:'m1',name:'',productName:'',size:'',qty:0,calW:'',calH:'',jo:'1',addons:[],jq:0,ja:true,js:'',dd:'',da:'',pk:'박스포장',ordered:new Date().toISOString().split('T')[0],status:'대기',memo:'',procs:[{type:'design',vendor:'',note:'',doneDate:''},{type:'mold',vendor:'',subType:'신규목형',note:'',doneDate:''}]};
   }
   if(!o)return;
+  // design/mold 중복 제거
+  if(o.procs){
+    const _seen=new Set();
+    o.procs=o.procs.filter(p=>{
+      if(p.type==='design'||p.type==='mold'){
+        if(_seen.has(p.type))return false;
+        _seen.add(p.type);
+      }
+      return true;
+    });
+  }
   const comp=COS.find(c=>c.id===o.company)||COS[0];
   const mgr=MGS.find(m=>m.id===o.manager)||MGS[0];
   openMod(`
@@ -4286,8 +4297,9 @@ function addProc(type){
   const o=getEO();if(!o)return;
   if(!o.procs)o.procs=[];
   const FIXED=['design','mold'];
-  // 디자인/목형은 항상 맨 뒤, 일반 공정은 디자인/목형 앞에 삽입
+  // 디자인/목형은 중복 추가 방지
   if(FIXED.includes(type)){
+    if(o.procs.some(p=>p.type===type)){toast((PM[type]?.name||type)+' 공정은 이미 추가되어 있어요');return;}
     o.procs.push(base);
   } else {
     // 배송 앞에 삽입 (기존 로직 유지)

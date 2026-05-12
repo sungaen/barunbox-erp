@@ -618,7 +618,7 @@ function orderRowHTML(o){
       <div style="font-size:13px;font-weight:500;">${o.productName||o.name} ${o.is_reorder?'<span class="badge badge-amber">재발주</span>':''}</div>
       <div style="font-size:11px;color:#888;">${o.clientName||'-'} · ${COS.find(c=>c.id===o.company)?.name||''}</div>
     </div>
-    <div style="font-size:12px;">${(o.procs||[]).filter(p=>p.type!=='design'&&p.type!=='mold').map(p=>PM[p.type]?.name||'').filter(Boolean).join('→')}</div>
+    <div style="font-size:12px;">${(o.procs||[]).map(p=>PM[p.type]?.name||'').filter(Boolean).join('→')}</div>
     <div style="font-size:13px;">${(o.qty||0).toLocaleString()}ea</div>
     <div><span class="badge ${STATUS_MAP[o.status]||'badge-gray'}">${o.status||'대기'}</span></div>
     <div style="display:flex;gap:4px;">
@@ -741,17 +741,6 @@ function openOrderForm(oid){
     o={id:null,clientName:'',client_id:null,company:'c1',manager:'m1',name:'',productName:'',size:'',qty:0,calW:'',calH:'',jo:'1',addons:[],jq:0,ja:true,js:'',dd:'',da:'',pk:'박스포장',ordered:new Date().toISOString().split('T')[0],status:'대기',memo:'',procs:[{type:'design',vendor:'',note:'',doneDate:''},{type:'mold',vendor:'',subType:'신규목형',note:'',doneDate:''}]};
   }
   if(!o)return;
-  // design/mold 중복 제거 (DB에 중복 저장된 경우 정리)
-  if(o.procs){
-    const _seen=new Set();
-    o.procs=o.procs.filter(p=>{
-      if(p.type==='design'||p.type==='mold'){
-        if(_seen.has(p.type))return false;
-        _seen.add(p.type);
-      }
-      return true;
-    });
-  }
   const comp=COS.find(c=>c.id===o.company)||COS[0];
   const mgr=MGS.find(m=>m.id===o.manager)||MGS[0];
   openMod(`
@@ -988,7 +977,7 @@ function openOrderForm(oid){
         <button class="btn btn-sm btn-primary" onclick="togAM()">+ 공정 추가</button>
         <div class="am" id="addmenu" style="display:none;">
           <div style="padding:6px 13px 3px;font-size:11px;color:#888;font-weight:600;">공정 유형</div>
-          ${Object.entries(PM).filter(([k])=>!['delivery','design','mold'].includes(k)).map(([k,v])=>`<div class="ai" onclick="addProc('${k}')"><div class="ad" style="background:${v.color};"></div>${v.name}</div>`).join('')}
+          ${Object.entries(PM).filter(([k])=>k!=='delivery').map(([k,v])=>`<div class="ai" onclick="addProc('${k}')"><div class="ad" style="background:${v.color};"></div>${v.name}</div>`).join('')}
         </div>
       </div>
     </div>
@@ -1470,7 +1459,7 @@ function openOrderDetail(oid){
   <div class="card" style="margin:0 0 1rem 0;">
     <div class="sec">공정 흐름</div>
     <div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-bottom:12px;">
-      ${(o.procs||[]).filter(p=>p.type!=='design'&&p.type!=='mold').map((p,i,arr)=>`<span style="font-size:12px;padding:3px 10px;border-radius:12px;background:${PM[p.type]?.color||'#888'}22;color:${PM[p.type]?.color||'#888'};">${PM[p.type]?.name||p.type} ${p.vendor?'('+p.vendor+')':''}</span>${i<arr.length-1?'<span style="color:#aaa;">→</span>':''}`).join('')}
+      ${(o.procs||[]).map((p,i)=>`<span style="font-size:12px;padding:3px 10px;border-radius:12px;background:${PM[p.type]?.color||'#888'}22;color:${PM[p.type]?.color||'#888'};">${PM[p.type]?.name||p.type} ${p.vendor?'('+p.vendor+')':''}</span>${i<o.procs.length-1?'<span style="color:#aaa;">→</span>':''}`).join('')}
     </div>
     <div class="sec" style="margin-top:4px;">공정 상세</div>
     ${procDetailHtml||'<div style="font-size:12px;color:#aaa;">공정 없음</div>'}
@@ -1678,7 +1667,7 @@ function listSetHtml(o){
 function listSingleRowHtml(o,isGroupMember){
   const status=getOrderStatus(o);
   const ss={'대기':'background:#f1f1ee;color:#666;','진행중':'background:#e8f0fe;color:#1a56c4;','생산완료대기':'background:#fff3e0;color:#e65100;','출고완료':'background:#e6f4ea;color:#1e7e34;'}[status]||'background:#f1f1ee;color:#666;';
-  const procs=o.procs||[];
+  const procs=(o.procs||[]).filter(p=>p.type!=='design'&&p.type!=='mold');
   const activePs=getActiveProcs(procs);
   // 병렬 공정 그룹핑: 연속된 활성 공정은 || 로 묶어서 표시
   let rhParts=[];
@@ -4278,8 +4267,8 @@ function addProc(type){
   const o=getEO();if(!o)return;
   if(!o.procs)o.procs=[];
   const FIXED=['design','mold'];
+  // 디자인/목형은 항상 맨 뒤, 일반 공정은 디자인/목형 앞에 삽입
   if(FIXED.includes(type)){
-    if(o.procs.some(p=>p.type===type)){toast((PM[type]?.name||type)+' 공정은 이미 추가되어 있어요');return;}
     o.procs.push(base);
   } else {
     // 배송 앞에 삽입 (기존 로직 유지)

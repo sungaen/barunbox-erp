@@ -977,7 +977,7 @@ function openOrderForm(oid){
         <button class="btn btn-sm btn-primary" onclick="togAM()">+ 공정 추가</button>
         <div class="am" id="addmenu" style="display:none;">
           <div style="padding:6px 13px 3px;font-size:11px;color:#888;font-weight:600;">공정 유형</div>
-          ${Object.entries(PM).filter(([k])=>k!=='delivery').map(([k,v])=>`<div class="ai" onclick="addProc('${k}')"><div class="ad" style="background:${v.color};"></div>${v.name}</div>`).join('')}
+          ${Object.entries(PM).filter(([k])=>!['delivery','design','mold'].includes(k)).map(([k,v])=>`<div class="ai" onclick="addProc('${k}')"><div class="ad" style="background:${v.color};"></div>${v.name}</div>`).join('')}
         </div>
       </div>
     </div>

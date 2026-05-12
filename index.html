@@ -730,18 +730,16 @@ async function importOrderFromPDF(input){
 function openOrderForm(oid){
   curOid=oid||null;
   let o;
-  if(oid){
-    window._editOrder=null;
-    o=DB.orders.find(x=>x.id===oid);
-  } else if(window._editOrder){
-    // AI 자동입력 또는 재발주: _editOrder 사용
+  if(window._editOrder){
+    // _editOrder 우선 사용 (신규/재발주/업체추가 후 복귀 등)
     o=window._editOrder;
     window._editOrder=null;
+  } else if(oid){
+    o=DB.orders.find(x=>x.id===oid);
   } else {
     o={id:null,clientName:'',client_id:null,company:'c1',manager:'m1',name:'',productName:'',size:'',qty:0,calW:'',calH:'',jo:'1',addons:[],jq:0,ja:true,js:'',dd:'',da:'',pk:'박스포장',ordered:new Date().toISOString().split('T')[0],status:'대기',memo:'',procs:[{type:'design',vendor:'',note:'',doneDate:''},{type:'mold',vendor:'',subType:'신규목형',note:'',doneDate:''}]};
   }
   if(!o)return;
-  if(o.procs){const _s=new Set();o.procs=o.procs.filter(p=>{if(p.type==='design'||p.type==='mold'){if(_s.has(p.type))return false;_s.add(p.type);}return true;});}
   const comp=COS.find(c=>c.id===o.company)||COS[0];
   const mgr=MGS.find(m=>m.id===o.manager)||MGS[0];
   openMod(`
@@ -978,7 +976,7 @@ function openOrderForm(oid){
         <button class="btn btn-sm btn-primary" onclick="togAM()">+ 공정 추가</button>
         <div class="am" id="addmenu" style="display:none;">
           <div style="padding:6px 13px 3px;font-size:11px;color:#888;font-weight:600;">공정 유형</div>
-          ${Object.entries(PM).filter(([k])=>!['delivery','design','mold'].includes(k)).map(([k,v])=>`<div class="ai" onclick="addProc('${k}')"><div class="ad" style="background:${v.color};"></div>${v.name}</div>`).join('')}
+          ${Object.entries(PM).filter(([k])=>k!=='delivery').map(([k,v])=>`<div class="ai" onclick="addProc('${k}')"><div class="ad" style="background:${v.color};"></div>${v.name}</div>`).join('')}
         </div>
       </div>
     </div>
@@ -1668,7 +1666,7 @@ function listSetHtml(o){
 function listSingleRowHtml(o,isGroupMember){
   const status=getOrderStatus(o);
   const ss={'대기':'background:#f1f1ee;color:#666;','진행중':'background:#e8f0fe;color:#1a56c4;','생산완료대기':'background:#fff3e0;color:#e65100;','출고완료':'background:#e6f4ea;color:#1e7e34;'}[status]||'background:#f1f1ee;color:#666;';
-  const procs=(o.procs||[]).filter(p=>p.type!=='design'&&p.type!=='mold');
+  const procs=o.procs||[];
   const activePs=getActiveProcs(procs);
   // 병렬 공정 그룹핑: 연속된 활성 공정은 || 로 묶어서 표시
   let rhParts=[];
@@ -3490,11 +3488,10 @@ async function saveClient(id){
     // MOD를 직접 발주폼 이전 상태로 복원할 수 없으므로
     // 발주폼을 다시 열지 않고 그냥 모달만 교체
     closeMod();
-    // 현재 편집중인 발주서 재오픈 - 편집 상태 보존
+    // 현재 편집중인 발주서 재오픈 - 편집 상태 완전 보존
     const eo2=getEO();
     const curOid2=curOid;
-    // 편집 중이던 EO를 _editOrder에 백업해서 openOrderForm이 날리지 않도록
-    if(eo2){window._editOrder=JSON.parse(JSON.stringify(eo2));}
+    if(eo2)window._editOrder=JSON.parse(JSON.stringify(eo2));
     openOrderForm(curOid2||null);
     toast('✅ "'+r[0].name+'" 거래처가 추가됐어요!');
     return;
@@ -4272,7 +4269,6 @@ function addProc(type){
   const FIXED=['design','mold'];
   // 디자인/목형은 항상 맨 뒤, 일반 공정은 디자인/목형 앞에 삽입
   if(FIXED.includes(type)){
-    if(o.procs.some(p=>p.type===type)){toast((PM[type]?.name||type)+' 공정은 이미 추가되어 있어요');return;}
     o.procs.push(base);
   } else {
     // 배송 앞에 삽입 (기존 로직 유지)

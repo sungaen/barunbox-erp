@@ -524,7 +524,7 @@ function mapOrder(o){
 }
 
 function gv(t){return DB.vendorDB[t]||[];}
-function renderCurrent(){if(curTab==='dashboard'){renderDashboard();return;}if(curTab==='orders'||curTab==='list'){rOrders();return;}else if(curTab==='vendor'){rVendor();restoreVendorState();}else if(curTab==='calendar')rCalendar();else if(curTab==='carton')rCarton();else if(curTab==='clients')rClients();else if(curTab==='molds')rMolds();}
+function renderCurrent(){if(curTab==='dashboard'){renderDashboard();return;}if(curTab==='orders'||curTab==='list'){rOrders();return;}else if(curTab==='vendor')rVendor();else if(curTab==='calendar')rCalendar();else if(curTab==='carton')rCarton();else if(curTab==='clients')rClients();else if(curTab==='molds')rMolds();}
 
 function sw(t){
   curTab=t;
@@ -910,10 +910,14 @@ function openOrderForm(oid){
 
         <div class="field" style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:8px;padding:10px 12px;margin-top:6px;">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-            <input type="checkbox" id="eq-is-product-stock" ${o.is_product_stock?'checked':''} />
+            <input type="checkbox" id="eq-is-product-stock" ${o.is_product_stock?'checked':''} onchange="document.getElementById('eq-init-stock-wrap').style.display=this.checked?'block':'none'"/>
             <span style="font-weight:600;color:#16a34a;">📋 제품 재고관리용 발주</span>
             <span style="font-size:11px;color:#888;">(출고 시 재고 차감 관리)</span>
           </label>
+          <div id="eq-init-stock-wrap" style="display:${o.is_product_stock?'block':'none'};margin-top:8px;">
+            <label style="font-size:12px;color:#555;margin-bottom:4px;display:block;">기초재고 수량 <span style="font-size:11px;color:#888;">(ERP 도입 시점 창고 보유량, 없으면 0)</span></label>
+            <input type="number" id="eq-init-stock" min="0" placeholder="0" value="${(()=>{const ps=DB.productStock.find(s=>s.order_id===o.id);return ps?ps.initial_stock:0})()}" style="width:150px;"/>
+          </div>
         </div>
       </div>
       <div class="g2">
@@ -1368,6 +1372,7 @@ async function saveOrder(oid){
   await _uploadPendingFiles(savedOid);
   // 제품 재고관리용이면 product_stock에 자동 등록 (기초재고는 나중에 입력)
   if(data.is_product_stock && savedOid){
+    const initStockVal=parseInt(document.getElementById('eq-init-stock')?.value)||0;
     const existing=DB.productStock.find(s=>s.order_id===savedOid);
     if(!existing){
       const cl=DB.clients.find(c=>c.id===data.client_id);
@@ -1377,11 +1382,17 @@ async function saveOrder(oid){
         client_name:data.client_name||cl?.name||'',
         product_name:data.product_name||data.name||'',
         size:data.size||'',
-        initial_stock:0,
-        current_stock:0,
+        initial_stock:initStockVal,
+        current_stock:initStockVal,
         note:''
       });
       if(r&&r[0]) DB.productStock.push(r[0]);
+    } else {
+      // 기존 레코드 있으면 기초재고만 업데이트 (현재고는 유지)
+      if(initStockVal!==existing.initial_stock){
+        await api('product_stock','PATCH',{initial_stock:initStockVal},'id=eq.'+existing.id);
+        existing.initial_stock=initStockVal;
+      }
     }
   }
   toast('저장 완료 ✓');
@@ -1667,7 +1678,7 @@ function listSetHtml(o){
 function listSingleRowHtml(o,isGroupMember){
   const status=getOrderStatus(o);
   const ss={'대기':'background:#f1f1ee;color:#666;','진행중':'background:#e8f0fe;color:#1a56c4;','생산완료대기':'background:#fff3e0;color:#e65100;','출고완료':'background:#e6f4ea;color:#1e7e34;'}[status]||'background:#f1f1ee;color:#666;';
-  const procs=o.procs||[];
+  const procs=(o.procs||[]).filter(p=>p.type!=='design'&&p.type!=='mold');
   const activePs=getActiveProcs(procs);
   // 병렬 공정 그룹핑: 연속된 활성 공정은 || 로 묶어서 표시
   let rhParts=[];
@@ -1774,7 +1785,7 @@ function rVendor(){
   const vendorMap={};
 
   DB.orders.filter(o=>o.status!=='출고완료').forEach(o=>{
-    const procs=o.procs||[];
+    const procs=(o.procs||[]).filter(p=>p.type!=='design'&&p.type!=='mold');
     const curProcs=getActiveProcs(procs);
     curProcs.forEach(function(curProc){
       if(!curProc.vendor)return;
@@ -1877,29 +1888,11 @@ async function rollbackProc(oid, pid){
   }
 
   toast('↩ ['+(PM[lastDone.type]?.name||lastDone.type)+'] 공정 롤백됐어요.');
-  rVendor();restoreVendorState();
+  rVendor();
   if(curTab==='list')rList();
 }
 
-function togVendorById(id){
-  const el=document.getElementById(id);if(!el)return;
-  const opening=el.style.display==='none';
-  el.style.display=opening?'block':'none';
-  if(!window._openVendorIds)window._openVendorIds=new Set();
-  if(opening)window._openVendorIds.add(id);
-  else window._openVendorIds.delete(id);
-  const arrow=el.previousElementSibling?.querySelector('span:last-child');
-  if(arrow)arrow.textContent=opening?'▼':'▶';
-}
-function restoreVendorState(){
-  if(!window._openVendorIds||!window._openVendorIds.size)return;
-  window._openVendorIds.forEach(function(id){
-    const el=document.getElementById(id);
-    if(el){el.style.display='block';
-    const arrow=el.previousElementSibling?.querySelector('span:last-child');
-    if(arrow)arrow.textContent='▼';}
-  });
-}
+function togVendorById(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
 function togVendor(id){const el=document.getElementById('vd-'+id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
 function filterVendor(q){document.querySelectorAll('.vendor-card').forEach(c=>{c.style.display=q?c.textContent.includes(q)?'block':'none':'block';});}
 
@@ -1917,31 +1910,68 @@ async function completeFixedProc(oid, pid){
   proc.doneDate=isDone?'':today;
   toast(isDone?'완료 취소됨':'✅ 완료처리됨');
   await syncAll();
-  rVendor();restoreVendorState();
+  rVendor();
 }
 
 async function completeProcAndNext(oid,pid){
   const o=DB.orders.find(x=>x.id===oid);if(!o)return;
   const procs=o.procs||[];
   const idx=procs.findIndex(p=>p.id===pid);if(idx<0)return;
+  const completedProc=procs[idx];
   await api('processes','PATCH',{is_done:true},`id=eq.${pid}`);
   procs[idx].is_done=true;
 
-  // 완료 후 활성 공정 재계산
+  const prodProcs=procs.filter(p=>p.type!=='delivery');
+  const allProdDone=prodProcs.every(p=>p.is_done);
   const allDone=procs.every(p=>p.is_done);
-  if(allDone){
+
+  if(['thomson','jeopchak','ssabari','assembly'].includes(completedProc.type)&&allProdDone){
+    await consumeCartonForOrder(o,completedProc);
+  }
+
+  if(allDone||allProdDone){
     await api('orders','PATCH',{status:'생산완료대기'},`id=eq.${oid}`);
     o.status='생산완료대기';
-    toast('🎉 모든 공정 완료! 생산완료대기로 변경됐어요.');
+
+    if(o.is_product_stock){
+      const addQty=o.qty||0;
+      const today=new Date().toISOString().split('T')[0];
+      let ps=DB.productStock.find(s=>s.order_id===oid);
+      if(ps){
+        // 현재고 = 기존 현재고(기초재고 포함) + 발주수량
+        const newStock=(Number(ps.current_stock)||0)+addQty;
+        await api('product_stock','PATCH',{current_stock:newStock,updated_at:new Date().toISOString()},'id=eq.'+ps.id);
+        await api('product_stock_movements','POST',{
+          product_stock_id:ps.id,move_type:'in',qty:addQty,
+          move_date:today,note:'생산완료 자동반영'
+        });
+        ps.current_stock=newStock;
+        toast('🎉 생산완료! 현재고 '+newStock.toLocaleString()+'개 (기초재고+'+(addQty).toLocaleString()+'개)');
+      } else {
+        // product_stock 레코드 없으면 신규 생성
+        const r=await api('product_stock','POST',{
+          order_id:oid,client_name:o.clientName||'',
+          product_name:o.productName||o.name||'',
+          size:o.size||'',
+          initial_stock:0,current_stock:addQty,
+          created_at:new Date().toISOString()
+        });
+        if(r&&r[0]){
+          await api('product_stock_movements','POST',{
+            product_stock_id:r[0].id,move_type:'in',qty:addQty,
+            move_date:today,note:'생산완료 자동반영'
+          });
+          DB.productStock.push(r[0]);
+        }
+        toast('🎉 생산완료! 제품재고 '+addQty.toLocaleString()+'개 반영됐어요.');
+      }
+    } else {
+      toast('🎉 모든 공정 완료! 생산완료대기로 변경됐어요.');
+    }
   } else {
     const nextActives=getActiveProcs(procs);
     const p=procs[idx];
-    const rt=(p.route||'').replace(/^→\s*/,'').trim();
-    // 내가 route한 대상이 아직 다른 공정을 기다리는지 확인 (원단 대기)
-    const waitingFor=nextActives.filter(np=>{
-      // 방금 완료한 공정과 같은 type의 미완료가 아직 있으면 원단 대기
-      return np.type===p.type&&!np.is_done&&np.id!==pid;
-    });
+    const waitingFor=nextActives.filter(np=>np.type===p.type&&!np.is_done&&np.id!==pid);
     if(waitingFor.length>0){
       toast('✓ 완료! 📦 원단 대기 중 — 나머지 지류 입고 후 다음 공정으로 이동해요.');
     } else if(nextActives.length>0){
@@ -1951,8 +1981,36 @@ async function completeProcAndNext(oid,pid){
       toast('✓ 완료 처리됐어요');
     }
   }
-  rVendor();restoreVendorState();
+  rVendor();
   if(curTab==='list')rList();
+}
+
+async function consumeCartonForOrder(o,completedProc){
+  const cartonQty=o.carton_qty||0;
+  if(!cartonQty){console.warn('[카톤차감] carton_qty 없음');return;}
+  const ctype=(DB.cartonTypes||[]).find(c=>String(c.id)===String(o.carton_type_id));
+  if(!ctype){console.warn('[카톤차감] carton_type 없음');return;}
+  const capacity=ctype.capacity||1;
+  const boxCount=Math.ceil(cartonQty/capacity);
+  const cartonSize=o.carton_size||(ctype.size||ctype.name||'');
+  if(!cartonSize){console.warn('[카톤차감] 사이즈 없음');return;}
+  const stock=(DB.cartonStock||[]).find(s=>s.size===cartonSize);
+  if(!stock){toast('⚠️ 카톤 재고 ['+cartonSize+'] 없음');return;}
+  const vendor=completedProc.vendor||'';
+  if(!vendor){console.warn('[카톤차감] vendor 없음');return;}
+  const vendorStock=(DB.cartonVendorStock||[]).find(v=>v.carton_stock_id===stock.id&&v.vendor===vendor);
+  if(!vendorStock){toast('⚠️ '+vendor+' ['+cartonSize+'] 카톤 재고 없음 — 발주처 이동 먼저 해주세요');return;}
+  const newQty=Math.max(0,(vendorStock.qty||0)-boxCount);
+  const today=new Date().toISOString().split('T')[0];
+  await api('carton_vendor_stock','PATCH',{qty:newQty,updated_at:new Date().toISOString()},'id=eq.'+vendorStock.id);
+  await api('carton_movements','POST',{
+    carton_stock_id:stock.id,move_type:'consume',qty:boxCount,move_date:today,vendor,order_id:o.id,
+    note:'공정완료 차감('+(o.productName||o.name)+' '+cartonQty+'개÷'+capacity+'=박스'+boxCount+'개)'
+  });
+  vendorStock.qty=newQty;
+  if(!DB.cartonMovements)DB.cartonMovements=[];
+  DB.cartonMovements.push({carton_stock_id:stock.id,move_type:'consume',qty:boxCount,move_date:today,vendor,order_id:o.id});
+  toast('📦 카톤 차감: '+vendor+' ['+cartonSize+'] '+boxCount+'박스 차감 → 잔여 '+newQty+'박스');
 }
 
 async function toggleProcDone(oid,pid,done){
@@ -1960,7 +2018,7 @@ async function toggleProcDone(oid,pid,done){
   const o=DB.orders.find(x=>x.id===oid);
   if(o){const p=o.procs.find(x=>x.id===pid);if(p)p.is_done=done;}
   toast(done?'완료 처리됐어요':'완료 취소됐어요');
-  rVendor();restoreVendorState();
+  rVendor();
   if(curTab==='list')rList();
 }
 
@@ -2828,24 +2886,36 @@ function rProductStock(){
         <span style="font-size:15px;font-weight:700;">🏢 ${cname}</span>
         <span style="font-size:12px;color:#888;">제품 ${orders.length}종</span>
       </div>
-      <div style="display:grid;grid-template-columns:80px 1fr 1fr 80px 80px 80px auto;gap:6px;padding:6px 10px;background:#f0f0ee;border-radius:6px;font-size:11px;font-weight:600;color:#888;margin-bottom:4px;">
-        <div>발주ID</div><div>제품명</div><div>사이즈</div><div>기초재고</div><div>현재고</div><div>발주수량</div><div></div>
+      <div style="display:grid;grid-template-columns:80px 1fr 1fr 80px 80px 80px 80px auto;gap:6px;padding:6px 10px;background:#f0f0ee;border-radius:6px;font-size:11px;font-weight:600;color:#888;margin-bottom:4px;">
+        <div>발주ID</div><div>제품명</div><div>사이즈</div><div style="text-align:center;">발주수량</div><div style="text-align:center;">기초재고</div><div style="text-align:center;">현재고</div><div style="text-align:center;">출고예정일</div><div></div>
       </div>
       ${orders.map(o=>{
         const ps=DB.productStock.find(s=>s.order_id===o.id);
-        const initStock=ps?ps.initial_stock:null;
-        const curStock=ps?ps.current_stock:null;
-        return '<div style="display:grid;grid-template-columns:80px 1fr 1fr 80px 80px 80px auto;gap:6px;padding:8px 10px;border-bottom:1px solid #f0f0ee;font-size:12px;align-items:center;">'+
+        const initStock=ps?(ps.initial_stock||0):null;
+        const curStock=ps?Number(ps.current_stock):null;
+        const shipDate=o.shipped_date||o.dd||'';
+        const isComplete=o.status==='생산완료대기'||o.status==='출고완료';
+        return '<div style="display:grid;grid-template-columns:80px 1fr 1fr 80px 80px 80px 80px auto;gap:6px;padding:8px 10px;border-bottom:1px solid #f0f0ee;font-size:12px;align-items:center;">'+
           '<div style="font-size:10px;color:#888;font-family:monospace;">'+o.id.substring(0,8)+'...</div>'+
-          '<div style="font-weight:500;">'+( o.productName||o.name||'-')+'</div>'+
-          '<div style="color:#555;">'+( o.size||'-')+'</div>'+
-          '<div style="text-align:center;font-weight:'+(initStock!==null?'700':'400')+';color:'+(initStock!==null?'#1a1a1a':'#aaa')+';">'+(initStock!==null?initStock.toLocaleString():'미입력')+'</div>'+
+          '<div style="font-weight:500;">'+(o.productName||o.name||'-')+'</div>'+
+          '<div style="color:#555;">'+(o.size||'-')+'</div>'+
+          '<div style="text-align:center;color:#555;font-weight:600;">'+(o.qty||0).toLocaleString()+'</div>'+
+          '<div style="text-align:center;color:'+(initStock>0?'#1a1a1a':'#aaa')+';font-weight:'+(initStock>0?'700':'400')+';">'+(initStock!==null?initStock.toLocaleString():'미입력')+'</div>'+
           '<div style="text-align:center;font-weight:700;color:'+(curStock!==null&&curStock<10?'#ef4444':'#1a1a1a')+';">'+(curStock!==null?curStock.toLocaleString():'-')+'</div>'+
-          '<div style="text-align:center;color:#555;">'+(o.qty||0).toLocaleString()+'</div>'+
+          '<div style="text-align:center;font-size:11px;color:'+(shipDate?'#1a56c4':'#aaa')+';">'+(shipDate||'-')+'</div>'+
           '<div style="display:flex;gap:4px;">'+
-          (initStock===null?
-          '<button class="btn btn-sm btn-primary" style="font-size:11px;" onclick="openInitStockById(this)" data-oid="'+o.id+'" data-qty="'+(o.qty||0)+'">기초재고 입력</button>':
-          '<button class="btn btn-sm" style="font-size:11px;" onclick="openProductStockHistoryById(this)" data-oid="'+o.id+'">이력</button>')+
+          (o.status==='출고완료'?
+            '<span style="font-size:11px;color:#16a34a;font-weight:600;">✅ 출고완료</span>':
+            (!isComplete?
+              '<span style="font-size:11px;color:#aaa;">생산중</span>':
+              (curStock>0?
+                '<button class="btn btn-sm btn-success" style="font-size:11px;" onclick="openProductShipment(this)" data-oid="'+o.id+'">🚚 출고 등록</button>'+
+                '<button class="btn btn-sm" style="font-size:11px;" onclick="openProductStockHistoryById(this)" data-oid="'+o.id+'">이력</button>':
+                '<span style="font-size:11px;color:#aaa;">재고 없음</span>'+
+                '<button class="btn btn-sm" style="font-size:11px;" onclick="openProductStockHistoryById(this)" data-oid="'+o.id+'">이력</button>'
+              )
+            )
+          )+
           '</div>'+
         '</div>';
       }).join('')}
@@ -2859,6 +2929,118 @@ function openInitStockById(btn){
   const orderQty=parseInt(btn.dataset.qty)||0;
   openInitStock(orderId, productName, orderQty);
 }
+async function applyProductionStock(btn){
+  const orderId=btn.dataset.oid;
+  const addQty=parseInt(btn.dataset.qty)||0;
+  if(!addQty){toast('발주수량이 없어요');return;}
+  const o=DB.orders.find(x=>x.id===orderId);
+  if(!o){toast('발주 정보를 찾을 수 없어요');return;}
+  const today=new Date().toISOString().split('T')[0];
+  let ps=DB.productStock.find(s=>s.order_id===orderId);
+  if(ps){
+    // 현재고 = 기존 현재고(기초재고 포함) + 발주수량
+    const newStock=(Number(ps.current_stock)||0)+addQty;
+    await api('product_stock','PATCH',{current_stock:newStock,updated_at:new Date().toISOString()},'id=eq.'+ps.id);
+    await api('product_stock_movements','POST',{product_stock_id:ps.id,move_type:'in',qty:addQty,move_date:today,note:'생산완료 수동반영'});
+    ps.current_stock=newStock;
+    toast('📥 현재고 '+newStock.toLocaleString()+'개 반영 (기초재고+'+(ps.initial_stock||0)+'개 + 생산'+addQty+'개)');
+  } else {
+    const r=await api('product_stock','POST',{
+      order_id:orderId,client_name:o.clientName||'',
+      product_name:o.productName||o.name||'',size:o.size||'',
+      initial_stock:0,current_stock:addQty,created_at:new Date().toISOString()
+    });
+    if(r&&r[0]){
+      await api('product_stock_movements','POST',{product_stock_id:r[0].id,move_type:'in',qty:addQty,move_date:today,note:'생산완료 수동반영'});
+      DB.productStock.push(r[0]);
+    }
+    toast('📥 제품재고 '+addQty.toLocaleString()+'개 반영됐어요!');
+  }
+  if(typeof rProductStock==='function')rProductStock();
+}
+
+function openProductShipment(btn){
+  const orderId=btn.dataset.oid;
+  const o=DB.orders.find(x=>x.id===orderId);
+  if(!o){toast('발주 정보를 찾을 수 없어요');return;}
+  const ps=DB.productStock.find(s=>s.order_id===orderId);
+  if(!ps){toast('재고 정보가 없어요');return;}
+  const curStock=ps.current_stock||0;
+  const today=new Date().toISOString().split('T')[0];
+  openMod(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+    <span style="font-size:15px;font-weight:600;">🚚 출고 등록</span>
+    <button class="btn btn-sm" onclick="closeMod()">닫기</button>
+  </div>
+  <div style="background:#f0fdf4;border-radius:8px;padding:10px 14px;margin-bottom:1rem;font-size:13px;">
+    <div style="font-weight:600;margin-bottom:4px;">${o.clientName||''} · ${o.productName||o.name||''}</div>
+    <div style="color:#555;">현재고: <b style="font-size:16px;color:${curStock<10?'#ef4444':'#16a34a'};">${curStock.toLocaleString()}</b>개</div>
+  </div>
+  <div class="g2">
+    <div class="field"><label>출고 수량</label>
+      <input type="number" id="ps-ship-qty" placeholder="0" min="1" max="${curStock}" style="font-size:16px;font-weight:700;"/>
+      <div style="font-size:11px;color:#888;margin-top:3px;">최대 ${curStock.toLocaleString()}개 가능</div>
+    </div>
+    <div class="field"><label>출고 예정일</label>
+      <input type="date" id="ps-ship-date" value="${today}"/>
+    </div>
+  </div>
+  <div class="field"><label>메모</label>
+    <input type="text" id="ps-ship-note" placeholder="특이사항 (선택)"/>
+  </div>
+  <div style="background:#fff3e0;border-radius:8px;padding:8px 12px;margin-bottom:1rem;font-size:12px;color:#e65100;">
+    ⚠️ 출고 등록 시 재고가 차감되고, 출고 관리 달력에 반영됩니다.
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+    <button class="btn" onclick="closeMod()">취소</button>
+    <button class="btn btn-success" onclick="executeProductShipment('${orderId}')">출고 등록</button>
+  </div>`);
+}
+
+async function executeProductShipment(orderId){
+  const qty=parseInt(document.getElementById('ps-ship-qty')?.value)||0;
+  const date=document.getElementById('ps-ship-date')?.value;
+  const note=document.getElementById('ps-ship-note')?.value||'';
+  if(!qty||qty<=0){toast('출고 수량을 입력해주세요');return;}
+  if(!date){toast('출고 예정일을 입력해주세요');return;}
+  const o=DB.orders.find(x=>x.id===orderId);
+  let ps=DB.productStock.find(s=>s.order_id===orderId);
+  if(!o){toast('발주 정보를 찾을 수 없어요');return;}
+  // DB에서 최신 재고 직접 조회
+  const freshPS=await api('product_stock','GET',null,'order_id=eq.'+orderId);
+  if(freshPS&&freshPS[0]){
+    ps=freshPS[0];
+    // 로컬 DB도 갱신
+    const localIdx=DB.productStock.findIndex(s=>s.order_id===orderId);
+    if(localIdx>=0)DB.productStock[localIdx]=ps;
+    else DB.productStock.push(ps);
+  }
+  if(!ps){toast('재고 정보를 찾을 수 없어요');return;}
+  const curStock=Number(ps.current_stock)||0;
+  console.log('[출고] orderId:',orderId,'curStock:',curStock,'qty:',qty);
+  if(qty>curStock){toast('재고가 부족해요 (현재고: '+curStock+'개)');return;}
+  const newStock=curStock-qty;
+  // 1) product_stock_movements 출고 이력
+  await api('product_stock_movements','POST',{
+    product_stock_id:ps.id,move_type:'out',qty,
+    move_date:date,note:note||'출고 등록'
+  });
+  // 2) product_stock 차감
+  await api('product_stock','PATCH',{current_stock:newStock,updated_at:new Date().toISOString()},'id=eq.'+ps.id);
+  // 3) orders에 출고 예정일 반영 → 출고관리 달력 노출
+  const patchData={shipped_date:date,dd:date};
+  if(newStock<=0){patchData.status='출고완료';patchData.shipped=true;}
+  await api('orders','PATCH',patchData,'id=eq.'+orderId);
+  // 로컬 반영
+  ps.current_stock=newStock;
+  o.shipped_date=date;o.dd=date;
+  if(newStock<=0){o.status='출고완료';o.shipped=true;}
+  if(!DB.productStockMovements)DB.productStockMovements=[];
+  DB.productStockMovements.unshift({product_stock_id:ps.id,move_type:'out',qty,move_date:date,note:note||'출고 등록'});
+  toast('✅ '+qty.toLocaleString()+'개 출고 등록! (잔여: '+newStock.toLocaleString()+'개)');
+  closeMod();
+  if(typeof rProductStock==='function')rProductStock();
+}
+
 function openProductStockHistoryById(btn){
   openProductStockHistory(btn.dataset.oid);
 }

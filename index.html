@@ -730,8 +730,10 @@ async function importOrderFromPDF(input){
 function openOrderForm(oid){
   curOid=oid||null;
   let o;
-  if(oid){
+  if(window._editOrder){
+    o=window._editOrder;
     window._editOrder=null;
+  } else if(oid){
     o=DB.orders.find(x=>x.id===oid);
   } else if(window._editOrder){
     // AI 자동입력 또는 재발주: _editOrder 사용
@@ -977,7 +979,7 @@ function openOrderForm(oid){
         <button class="btn btn-sm btn-primary" onclick="togAM()">+ 공정 추가</button>
         <div class="am" id="addmenu" style="display:none;">
           <div style="padding:6px 13px 3px;font-size:11px;color:#888;font-weight:600;">공정 유형</div>
-          ${Object.entries(PM).filter(([k])=>k!=='delivery').map(([k,v])=>`<div class="ai" onclick="addProc('${k}')"><div class="ad" style="background:${v.color};"></div>${v.name}</div>`).join('')}
+          ${Object.entries(PM).filter(([k])=>!['delivery','design','mold'].includes(k)).map(([k,v])=>`<div class="ai" onclick="addProc('${k}')"><div class="ad" style="background:${v.color};"></div>${v.name}</div>`).join('')}
         </div>
       </div>
     </div>
@@ -1774,7 +1776,7 @@ function rVendor(){
   const vendorMap={};
 
   DB.orders.filter(o=>o.status!=='출고완료').forEach(o=>{
-    const procs=o.procs||[];
+    const procs=(o.procs||[]).filter(p=>p.type!=='design'&&p.type!=='mold');
     const curProcs=getActiveProcs(procs);
     curProcs.forEach(function(curProc){
       if(!curProc.vendor)return;
@@ -1906,24 +1908,29 @@ async function completeProcAndNext(oid,pid){
   const o=DB.orders.find(x=>x.id===oid);if(!o)return;
   const procs=o.procs||[];
   const idx=procs.findIndex(p=>p.id===pid);if(idx<0)return;
+  const completedProc=procs[idx];
   await api('processes','PATCH',{is_done:true},`id=eq.${pid}`);
   procs[idx].is_done=true;
 
-  // 완료 후 활성 공정 재계산
+  // delivery 제외 생산공정 완료 여부
+  const prodProcs=procs.filter(p=>p.type!=='delivery');
+  const allProdDone=prodProcs.every(p=>p.is_done);
   const allDone=procs.every(p=>p.is_done);
-  if(allDone){
+
+  // 카톤 재고 차감: 톰슨/접착/싸바리/조립 완료 + 모든 생산공정 완료 시
+  const CARTON_PROC_TYPES=['thomson','jeopchak','ssabari','assembly'];
+  if(CARTON_PROC_TYPES.includes(completedProc.type)&&allProdDone){
+    await consumeCartonForOrder(o,completedProc);
+  }
+
+  if(allDone||allProdDone){
     await api('orders','PATCH',{status:'생산완료대기'},`id=eq.${oid}`);
     o.status='생산완료대기';
     toast('🎉 모든 공정 완료! 생산완료대기로 변경됐어요.');
   } else {
     const nextActives=getActiveProcs(procs);
     const p=procs[idx];
-    const rt=(p.route||'').replace(/^→\s*/,'').trim();
-    // 내가 route한 대상이 아직 다른 공정을 기다리는지 확인 (원단 대기)
-    const waitingFor=nextActives.filter(np=>{
-      // 방금 완료한 공정과 같은 type의 미완료가 아직 있으면 원단 대기
-      return np.type===p.type&&!np.is_done&&np.id!==pid;
-    });
+    const waitingFor=nextActives.filter(np=>np.type===p.type&&!np.is_done&&np.id!==pid);
     if(waitingFor.length>0){
       toast('✓ 완료! 📦 원단 대기 중 — 나머지 지류 입고 후 다음 공정으로 이동해요.');
     } else if(nextActives.length>0){
@@ -1935,6 +1942,36 @@ async function completeProcAndNext(oid,pid){
   }
   rVendor();
   if(curTab==='list')rList();
+}
+
+// 공정 완료 시 발주처 카톤 실차감 (실제 박스 수 = ceil(carton_qty ÷ capacity))
+async function consumeCartonForOrder(o,completedProc){
+  const cartonQty=o.carton_qty||0;
+  if(!cartonQty){console.warn('[카톤차감] carton_qty 없음');return;}
+  const ctype=(DB.cartonTypes||[]).find(c=>String(c.id)===String(o.carton_type_id));
+  if(!ctype){console.warn('[카톤차감] carton_type 없음');return;}
+  const capacity=ctype.capacity||1;
+  const boxCount=Math.ceil(cartonQty/capacity);
+  let cartonSize=o.carton_size||'';
+  if(!cartonSize)cartonSize=ctype.size||ctype.name||'';
+  if(!cartonSize){console.warn('[카톤차감] 사이즈 없음');return;}
+  const stock=(DB.cartonStock||[]).find(s=>s.size===cartonSize);
+  if(!stock){toast('⚠️ 카톤 재고 ['+cartonSize+'] 없음');return;}
+  const vendor=completedProc.vendor||'';
+  if(!vendor){console.warn('[카톤차감] vendor 없음');return;}
+  const vendorStock=(DB.cartonVendorStock||[]).find(v=>v.carton_stock_id===stock.id&&v.vendor===vendor);
+  if(!vendorStock){toast('⚠️ '+vendor+' ['+cartonSize+'] 카톤 재고 없음 — 발주처 이동 먼저 해주세요');return;}
+  const newQty=Math.max(0,(vendorStock.qty||0)-boxCount);
+  const today=new Date().toISOString().split('T')[0];
+  await api('carton_vendor_stock','PATCH',{qty:newQty,updated_at:new Date().toISOString()},'id=eq.'+vendorStock.id);
+  await api('carton_movements','POST',{
+    carton_stock_id:stock.id,move_type:'consume',qty:boxCount,move_date:today,vendor,order_id:o.id,
+    note:'공정완료 차감 ('+(o.productName||o.name)+' 제품 '+cartonQty+'개 ÷ '+capacity+' = 박스 '+boxCount+'개)'
+  });
+  vendorStock.qty=newQty;
+  if(!DB.cartonMovements)DB.cartonMovements=[];
+  DB.cartonMovements.push({carton_stock_id:stock.id,move_type:'consume',qty:boxCount,move_date:today,vendor,order_id:o.id});
+  toast('📦 카톤 차감: '+vendor+' ['+cartonSize+'] '+boxCount+'박스 → 잔여 '+newQty+'박스 (제품 '+cartonQty+'÷'+capacity+')');
 }
 
 async function toggleProcDone(oid,pid,done){
@@ -4269,6 +4306,7 @@ function addProc(type){
   const FIXED=['design','mold'];
   // 디자인/목형은 항상 맨 뒤, 일반 공정은 디자인/목형 앞에 삽입
   if(FIXED.includes(type)){
+    if(o.procs.some(p=>p.type===type)){toast((PM[type]?.name||type)+' 공정은 이미 추가되어 있어요');return;}
     o.procs.push(base);
   } else {
     // 배송 앞에 삽입 (기존 로직 유지)

@@ -524,7 +524,7 @@ function mapOrder(o){
 }
 
 function gv(t){return DB.vendorDB[t]||[];}
-function renderCurrent(){if(curTab==='dashboard'){renderDashboard();return;}if(curTab==='orders'||curTab==='list'){rOrders();return;}else if(curTab==='vendor')rVendor();else if(curTab==='calendar')rCalendar();else if(curTab==='carton')rCarton();else if(curTab==='clients')rClients();else if(curTab==='molds')rMolds();}
+function renderCurrent(){if(curTab==='dashboard'){renderDashboard();return;}if(curTab==='orders'||curTab==='list'){rOrders();return;}else if(curTab==='vendor'){rVendor();restoreVendorState();}else if(curTab==='calendar')rCalendar();else if(curTab==='carton')rCarton();else if(curTab==='clients')rClients();else if(curTab==='molds')rMolds();}
 
 function sw(t){
   curTab=t;
@@ -1877,11 +1877,29 @@ async function rollbackProc(oid, pid){
   }
 
   toast('↩ ['+(PM[lastDone.type]?.name||lastDone.type)+'] 공정 롤백됐어요.');
-  rVendor();
+  rVendor();restoreVendorState();
   if(curTab==='list')rList();
 }
 
-function togVendorById(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
+function togVendorById(id){
+  const el=document.getElementById(id);if(!el)return;
+  const opening=el.style.display==='none';
+  el.style.display=opening?'block':'none';
+  if(!window._openVendorIds)window._openVendorIds=new Set();
+  if(opening)window._openVendorIds.add(id);
+  else window._openVendorIds.delete(id);
+  const arrow=el.previousElementSibling?.querySelector('span:last-child');
+  if(arrow)arrow.textContent=opening?'▼':'▶';
+}
+function restoreVendorState(){
+  if(!window._openVendorIds||!window._openVendorIds.size)return;
+  window._openVendorIds.forEach(function(id){
+    const el=document.getElementById(id);
+    if(el){el.style.display='block';
+    const arrow=el.previousElementSibling?.querySelector('span:last-child');
+    if(arrow)arrow.textContent='▼';}
+  });
+}
 function togVendor(id){const el=document.getElementById('vd-'+id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
 function filterVendor(q){document.querySelectorAll('.vendor-card').forEach(c=>{c.style.display=q?c.textContent.includes(q)?'block':'none':'block';});}
 
@@ -1899,7 +1917,7 @@ async function completeFixedProc(oid, pid){
   proc.doneDate=isDone?'':today;
   toast(isDone?'완료 취소됨':'✅ 완료처리됨');
   await syncAll();
-  rVendor();
+  rVendor();restoreVendorState();
 }
 
 async function completeProcAndNext(oid,pid){
@@ -1933,7 +1951,7 @@ async function completeProcAndNext(oid,pid){
       toast('✓ 완료 처리됐어요');
     }
   }
-  rVendor();
+  rVendor();restoreVendorState();
   if(curTab==='list')rList();
 }
 
@@ -1942,7 +1960,7 @@ async function toggleProcDone(oid,pid,done){
   const o=DB.orders.find(x=>x.id===oid);
   if(o){const p=o.procs.find(x=>x.id===pid);if(p)p.is_done=done;}
   toast(done?'완료 처리됐어요':'완료 취소됐어요');
-  rVendor();
+  rVendor();restoreVendorState();
   if(curTab==='list')rList();
 }
 
@@ -2733,25 +2751,18 @@ function rCarton(tab){
     if(stock) stock.pendingQty+=(qty||0);
   });
 
-  // 발주처별 사용예정량 - carton_type_id → size → stock → vendor 정확히 매핑
-  const vendorUsedMap={};  // { stockId: { vendor: boxCount } }
+  // 예상 사용량 - 발주처에 해당 카톤 사용하는 발주들
   (DB.orders||[]).filter(o=>o.carton_type_id&&o.status!=='출고완료').forEach(o=>{
-    const cartonQty=o.carton_qty||0;
-    if(!cartonQty)return;
-    const ctype=(DB.cartonTypes||[]).find(c=>String(c.id)===String(o.carton_type_id));
-    if(!ctype)return;
-    const capacity=ctype.capacity||1;
-    const boxCount=Math.ceil(cartonQty/capacity);
-    const cartonSize=o.carton_size||(ctype.size||ctype.name||'');
-    if(!cartonSize)return;
-    const stock=Object.values(stockMap).find(s=>s.size===cartonSize);
-    if(!stock)return;
-    const lastProc=(o.procs||[]).filter(p=>['thomson','jeopchak','ssabari','assembly'].includes(p.type)).pop();
+    const qty=o.carton_qty||0;
+    // 발주처(마지막 공정 업체)
+    const lastProc=(o.procs||[]).filter(p=>['thomson','assembly','ssabari','jeopchak'].includes(p.type)).pop();
     const vendor=lastProc?.vendor||'';
-    if(!vendor)return;
-    if(!vendorUsedMap[stock.id])vendorUsedMap[stock.id]={};
-    vendorUsedMap[stock.id][vendor]=(vendorUsedMap[stock.id][vendor]||0)+boxCount;
-    stock.usedQty+=boxCount;
+    if(vendor){
+      Object.values(stockMap).forEach(s=>{
+        const vs=s.vendorStocks.find(v=>v.vendor===vendor);
+        if(vs) s.usedQty+=(qty||0);
+      });
+    }
   });
 
   const stockList=Object.values(stockMap);
@@ -2773,7 +2784,7 @@ function rCarton(tab){
       const vendorTotal=s.vendorStocks.reduce((t,v)=>t+(v.qty||0),0);
       const expectedRemain=vendorTotal-(s.usedQty||0);
       const isLow=expectedRemain<0||(s.current_stock<10&&!s.pendingQty);
-      return `<div class="card" style="margin-bottom:12px;${isLow?'border-color:#ef4444;':''}">        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">          <div style="display:flex;align-items:center;gap:10px;">            <span style="font-size:15px;font-weight:700;">📦 ${s.size}</span>            ${isLow?'<span style="background:#fef2f2;color:#ef4444;border:1px solid #fecaca;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:600;">⚠️ 재고 부족</span>':''}          </div>          <div style="display:flex;gap:6px;">            <button class="btn btn-sm" onclick="openCartonTransfer(${s.id})">↗ 발주처 이동</button>            <button class="btn btn-sm" onclick="openCartonHistory(${s.id})">이력</button>          </div>        </div>        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;">          <div style="background:#f0f9ff;border-radius:8px;padding:10px;text-align:center;">            <div style="font-size:11px;color:#0369a1;margin-bottom:4px;">카톤재고 총량</div>            <div style="font-size:20px;font-weight:700;">${(s.current_stock||0).toLocaleString()}</div>            <div style="font-size:10px;color:#888;">현재 창고 보유</div>          </div>          <div style="background:#fef9c3;border-radius:8px;padding:10px;text-align:center;">            <div style="font-size:11px;color:#854d0e;margin-bottom:4px;">완료예정 카톤</div>            <div style="font-size:20px;font-weight:700;">${(s.pendingQty||0).toLocaleString()}</div>            <div style="font-size:10px;color:#888;">발주중(미완료)</div>          </div>          <div style="background:#f0fdf4;border-radius:8px;padding:10px;text-align:center;">            <div style="font-size:11px;color:#166534;margin-bottom:4px;">발주처 총재고</div>            <div style="font-size:20px;font-weight:700;">${vendorTotal.toLocaleString()}</div>            <div style="font-size:10px;color:#888;">이동 완료된 것</div>          </div>          <div style="background:${expectedRemain<0?'#fef2f2':'#faf5ff'};border-radius:8px;padding:10px;text-align:center;">            <div style="font-size:11px;color:${expectedRemain<0?'#991b1b':'#6b21a8'};margin-bottom:4px;">카톤 예상재고</div>            <div style="font-size:20px;font-weight:700;color:${expectedRemain<0?'#ef4444':'inherit'};">${expectedRemain.toLocaleString()}</div>            <div style="font-size:10px;color:#888;">발주처재고-사용예정</div>          </div>        </div>        ${s.vendorStocks.length?`<div style="border-top:1px solid #e8e8e4;padding-top:10px;">          <div style="font-size:11px;color:#888;font-weight:600;margin-bottom:6px;">발주처별 카톤 재고</div>          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;">          ${s.vendorStocks.map(v=>{const used=(vendorUsedMap[s.id]&&vendorUsedMap[s.id][v.vendor])||0;const remain=(v.qty||0)-used;const isShort=remain<0;return '<div style="background:'+(isShort?'#fef2f2':'#f5f5f3')+';border-radius:6px;padding:8px 10px;"><div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:12px;font-weight:500;">'+v.vendor+'</span><span style="font-size:14px;font-weight:700;color:'+(isShort?'#ef4444':'inherit')+';">'+(v.qty||0).toLocaleString()+'박스</span></div>'+(used>0?'<div style="font-size:10px;color:#888;margin-top:2px;">사용예정 '+used+'박스 → 잔여 <b style="color:'+(isShort?'#ef4444':'#16a34a')+';">'+remain+'박스</b></div>':'')+'</div>';}).join('')}          </div>        </div>`:'<div style="border-top:1px solid #e8e8e4;padding-top:10px;font-size:12px;color:#aaa;">아직 발주처로 이동된 카톤이 없어요</div>'}      </div>`;
+      return `<div class="card" style="margin-bottom:12px;${isLow?'border-color:#ef4444;':''}">        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">          <div style="display:flex;align-items:center;gap:10px;">            <span style="font-size:15px;font-weight:700;">📦 ${s.size}</span>            ${isLow?'<span style="background:#fef2f2;color:#ef4444;border:1px solid #fecaca;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:600;">⚠️ 재고 부족</span>':''}          </div>          <div style="display:flex;gap:6px;">            <button class="btn btn-sm" onclick="openCartonTransfer(${s.id})">↗ 발주처 이동</button>            <button class="btn btn-sm" onclick="openCartonHistory(${s.id})">이력</button>          </div>        </div>        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;">          <div style="background:#f0f9ff;border-radius:8px;padding:10px;text-align:center;">            <div style="font-size:11px;color:#0369a1;margin-bottom:4px;">카톤재고 총량</div>            <div style="font-size:20px;font-weight:700;">${(s.current_stock||0).toLocaleString()}</div>            <div style="font-size:10px;color:#888;">현재 창고 보유</div>          </div>          <div style="background:#fef9c3;border-radius:8px;padding:10px;text-align:center;">            <div style="font-size:11px;color:#854d0e;margin-bottom:4px;">완료예정 카톤</div>            <div style="font-size:20px;font-weight:700;">${(s.pendingQty||0).toLocaleString()}</div>            <div style="font-size:10px;color:#888;">발주중(미완료)</div>          </div>          <div style="background:#f0fdf4;border-radius:8px;padding:10px;text-align:center;">            <div style="font-size:11px;color:#166534;margin-bottom:4px;">발주처 총재고</div>            <div style="font-size:20px;font-weight:700;">${vendorTotal.toLocaleString()}</div>            <div style="font-size:10px;color:#888;">이동 완료된 것</div>          </div>          <div style="background:${expectedRemain<0?'#fef2f2':'#faf5ff'};border-radius:8px;padding:10px;text-align:center;">            <div style="font-size:11px;color:${expectedRemain<0?'#991b1b':'#6b21a8'};margin-bottom:4px;">카톤 예상재고</div>            <div style="font-size:20px;font-weight:700;color:${expectedRemain<0?'#ef4444':'inherit'};">${expectedRemain.toLocaleString()}</div>            <div style="font-size:10px;color:#888;">발주처재고-사용예정</div>          </div>        </div>        ${s.vendorStocks.length?`<div style="border-top:1px solid #e8e8e4;padding-top:10px;">          <div style="font-size:11px;color:#888;font-weight:600;margin-bottom:6px;">발주처별 카톤 재고</div>          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;">          ${s.vendorStocks.map(v=>`<div style="background:#f5f5f3;border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;">            <span style="font-size:12px;font-weight:500;">${v.vendor}</span>            <span style="font-size:14px;font-weight:700;">${(v.qty||0).toLocaleString()}</span>          </div>`).join('')}          </div>        </div>`:'<div style="border-top:1px solid #e8e8e4;padding-top:10px;font-size:12px;color:#aaa;">아직 발주처로 이동된 카톤이 없어요</div>'}      </div>`;
     }).join('')
   }
 

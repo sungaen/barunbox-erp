@@ -495,6 +495,7 @@ async function syncAll(){
     }
     document.getElementById('sync-status').textContent=`마지막 동기화 ${new Date().toLocaleTimeString('ko')}`;
     await syncMolds();
+    await loadDayMemos();
     // 상태 불일치 자동 보정: 공정 완료됐는데 DB 상태가 안 바뀐 발주
     const toFix=DB.orders.filter(o=>{
       if(o.status==='출고완료'||o.status==='생산완료대기')return false;
@@ -2260,56 +2261,85 @@ function rCalDay(){
       ${!dayOrders.length?
         `<div style="padding:20px;text-align:center;color:#aaa;font-size:13px;border:1px dashed #e8e8e4;border-radius:8px;">출고 예정 없음</div>`:
         (()=>{
-          // 날짜별 순서 적용
+          // 날짜별 순서 적용 + 거래처별 묶음
           const sorted=getDayOrdersSorted(ds,dayOrders);
-          return sorted.map((o,idx)=>{
-            const procs=o.procs||[];
-            const doneCount=procs.filter(p=>p.is_done).length;
-            const pct=procs.length?Math.round(doneCount/procs.length*100):0;
-            const client=DB.clients.find(c=>c.id===o.client_id||(c.name&&c.name===o.clientName));
-            const clientTel=client&&client.tel?client.tel:'';
-            const clientContact=client&&client.contact?client.contact:'';
-            const addr=o.da||o.delivery_addr||o.deliveryAddr||'';
-            return `<div class="day-order-item" draggable="true"
-              data-oid="${o.id}" data-ds="${ds}" data-idx="${idx}"
-              ondragstart="dayOrderDragStart(event)"
-              ondragover="dayOrderDragOver(event)"
-              ondrop="dayOrderDrop(event)"
-              ondragleave="dayOrderDragLeave(event)"
-              style="border:1px solid #e8e8e4;border-radius:8px;padding:12px;margin-bottom:8px;background:#fff;cursor:grab;">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          // 거래처별 그룹핑
+          const clientGroups=[];
+          const clientMap={};
+          sorted.forEach(o=>{
+            const key=o.clientName||o.client_id||'기타';
+            if(!clientMap[key]){clientMap[key]=[];clientGroups.push({key,orders:clientMap[key]});}
+            clientMap[key].push(o);
+          });
+          let globalIdx=0;
+          return clientGroups.map(({key,orders:gOrders})=>{
+            const client=DB.clients.find(c=>c.name===key||c.id===gOrders[0]?.client_id);
+            const clientTel=client?.tel||'';
+            const clientContact=client?.contact||'';
+            const addr=gOrders[0]?.da||gOrders[0]?.delivery_addr||'';
+            const groupHtml=gOrders.map(o=>{
+              const idx=globalIdx++;
+              const procs=o.procs||[];
+              const doneCount=procs.filter(p=>p.is_done).length;
+              const pct=procs.length?Math.round(doneCount/procs.length*100):0;
+              return `<div class="day-order-item" draggable="true"
+                data-oid="${o.id}" data-ds="${ds}" data-idx="${idx}"
+                ondragstart="dayOrderDragStart(event)"
+                ondragover="dayOrderDragOver(event)"
+                ondrop="dayOrderDrop(event)"
+                ondragleave="dayOrderDragLeave(event)"
+                style="padding:8px 10px;margin-bottom:4px;background:#fff;border-radius:6px;border:1px solid #f0f0ee;cursor:grab;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <div style="color:#ccc;font-size:14px;cursor:grab;flex-shrink:0;">⠿</div>
+                  <div style="width:18px;height:18px;border-radius:50%;background:#555;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${gOrders.indexOf(o)+1}</div>
+                  <div style="flex:1;">
+                    <div style="font-size:12px;font-weight:600;">${o.productName||o.name}</div>
+                    <div style="font-size:10px;color:#888;">${(o.qty||0).toLocaleString()}ea</div>
+                  </div>
+                  <span class="badge ${o.shipped?'badge-green':pct===100?'badge-amber':'badge-blue'}" style="font-size:10px;">${o.shipped?'출고완료':pct===100?'생산완료':'진행중'}</span>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:2px;margin:5px 0 0 26px;">
+                  ${procs.filter(p=>p.type!=='design'&&p.type!=='mold').map(p=>`<span style="font-size:9px;padding:1px 5px;border-radius:6px;${p.is_done?'background:#e6f4ea;color:#1e7e34;':'background:#f1f1ee;color:#aaa;'}">${PM[p.type]?.name||''}</span>`).join('<span style="color:#ddd;font-size:8px;"> → </span>')}
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;margin:5px 0 0 26px;">
+                  <div style="flex:1;height:3px;background:#f0f0ee;border-radius:2px;overflow:hidden;">
+                    <div style="height:100%;width:${pct}%;background:${pct===100?'#1e7e34':'#1a56c4'};border-radius:2px;"></div>
+                  </div>
+                  <span style="font-size:10px;color:#888;">${pct}%</span>
+                  ${!o.shipped&&pct===100?`<button class="btn btn-sm btn-success" style="font-size:10px;padding:2px 8px;" onclick="markShipped('${o.id}')">출고완료</button>`:''}
+                </div>
+                <div id="order-notes-${o.id}" style="margin:4px 0 0 26px;">${rOrderNotes(o.id)}</div>
+                <div style="margin:3px 0 0 26px;">
+                  <button data-oid="${o.id}" onclick="togOrderNoteInput(this.dataset.oid)" style="font-size:10px;padding:2px 0;border:1px dashed #d0d0cc;border-radius:4px;color:#888;background:#fff;cursor:pointer;width:100%;text-align:center;">+ 메모 추가</button>
+                  <div id="order-note-input-${o.id}" style="display:none;margin-top:4px;">
+                    <textarea id="order-note-txt-${o.id}" rows="2" placeholder="메모 내용..." style="font-size:11px;margin-bottom:3px;resize:none;width:100%;box-sizing:border-box;"></textarea>
+                    <div style="display:flex;justify-content:flex-end;gap:4px;">
+                      <button data-oid="${o.id}" onclick="togOrderNoteInput(this.dataset.oid)" style="padding:2px 8px;font-size:10px;border:1px solid #e8e8e4;border-radius:4px;background:#fff;cursor:pointer;">취소</button>
+                      <button data-oid="${o.id}" onclick="saveOrderNote(this.dataset.oid)" style="padding:2px 8px;font-size:10px;border:none;border-radius:4px;background:#1a1a1a;color:#fff;cursor:pointer;">저장</button>
+                    </div>
+                  </div>
+                </div>
+              </div>`;
+            }).join('');
+            const gi=clientGroups.findIndex(g=>g.key===key);
+            return `<div class="day-group-item" draggable="true"
+              data-groupkey="${key}" data-ds="${ds}" data-gi="${gi}"
+              ondragstart="dayGroupDragStart(event)"
+              ondragover="dayGroupDragOver(event)"
+              ondrop="dayGroupDrop(event)"
+              ondragleave="dayGroupDragLeave(event)"
+              style="border:1px solid #e8e8e4;border-radius:10px;padding:12px;margin-bottom:10px;background:#fff;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #f0f0ee;">
                 <div style="color:#ccc;font-size:16px;cursor:grab;flex-shrink:0;">⠿</div>
-                <div style="width:22px;height:22px;border-radius:50%;background:#1a1a1a;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${idx+1}</div>
+                <div style="width:24px;height:24px;border-radius:50%;background:#1a1a1a;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${gi+1}</div>
                 <div style="flex:1;">
-                  <div style="font-size:13px;font-weight:600;">${o.productName||o.name}</div>
-                  <div style="font-size:11px;color:#888;">${o.clientName||'-'} · ${(o.qty||0).toLocaleString()}ea</div>
-                </div>
-                <span class="badge ${o.shipped?'badge-green':pct===100?'badge-amber':'badge-blue'}">${o.shipped?'출고완료':pct===100?'생산완료':'진행중'}</span>
-              </div>
-              ${addr?`<div style="font-size:11px;color:#555;margin-bottom:5px;display:flex;align-items:flex-start;gap:5px;"><span style="color:#aaa;flex-shrink:0;">📍</span><span>${addr}</span></div>`:''}
-              ${(clientContact||clientTel)?`<div style="font-size:11px;color:#555;margin-bottom:6px;display:flex;align-items:center;gap:5px;"><span style="color:#aaa;">📞</span><span>${clientContact?clientContact+' ':''} ${clientTel}</span></div>`:''}
-              <div style="display:flex;flex-wrap:wrap;gap:2px;margin-bottom:6px;">
-                ${procs.map(p=>`<span style="font-size:10px;padding:1px 6px;border-radius:8px;${p.is_done?'background:#e6f4ea;color:#1e7e34;':'background:#f1f1ee;color:#aaa;'}">${PM[p.type]?.name||''}</span>`).join('<span style="color:#ddd;font-size:9px;"> → </span>')}
-              </div>
-              <div style="display:flex;align-items:center;gap:6px;">
-                <div style="flex:1;height:4px;background:#f0f0ee;border-radius:2px;overflow:hidden;">
-                  <div style="height:100%;width:${pct}%;background:${pct===100?'#1e7e34':'#1a56c4'};border-radius:2px;"></div>
-                </div>
-                <span style="font-size:11px;color:#888;">${pct}%</span>
-                ${!o.shipped&&pct===100?`<button class="btn btn-sm btn-success" onclick="markShipped('${o.id}')">출고완료</button>`:''}
-            </div>
-            <div id="order-notes-${o.id}" style="margin-top:6px;">${rOrderNotes(o.id)}</div>
-            <div style="margin-top:4px;">
-              <button data-oid="${o.id}" onclick="togOrderNoteInput(this.dataset.oid)" style="font-size:11px;padding:3px 0;border:1px dashed #d0d0cc;border-radius:4px;color:#888;background:#fff;cursor:pointer;width:100%;text-align:center;">+ 메모 추가</button>
-              <div id="order-note-input-${o.id}" style="display:none;margin-top:5px;">
-                <textarea id="order-note-txt-${o.id}" rows="2" placeholder="메모 내용..." style="font-size:12px;margin-bottom:4px;resize:none;width:100%;box-sizing:border-box;"></textarea>
-                <div style="display:flex;justify-content:flex-end;gap:4px;">
-                  <button data-oid="${o.id}" onclick="togOrderNoteInput(this.dataset.oid)" style="padding:3px 10px;font-size:11px;border:1px solid #e8e8e4;border-radius:4px;background:#fff;cursor:pointer;">취소</button>
-                  <button data-oid="${o.id}" onclick="saveOrderNote(this.dataset.oid)" style="padding:3px 10px;font-size:11px;border:none;border-radius:4px;background:#1a1a1a;color:#fff;cursor:pointer;">저장</button>
+                  <div style="font-size:13px;font-weight:700;">${key} <span style="font-size:11px;color:#aaa;font-weight:400;">${gOrders.length}건</span></div>
+                  ${addr?`<div style="font-size:10px;color:#888;">📍 ${addr}</div>`:''}
+                  ${(clientContact||clientTel)?`<div style="font-size:10px;color:#888;">📞 ${clientContact||''} ${clientTel}</div>`:''}
                 </div>
               </div>
-            </div>
-          </div>`;
+              ${groupHtml}
+            </div>`;
           }).join('');
         })()}
     </div>
@@ -2319,6 +2349,14 @@ function rCalDay(){
       <div style="font-size:13px;font-weight:600;color:#555;margin-bottom:12px;">
         🚛 이동 및 영외지역 관리
         <span style="font-weight:400;color:#aaa;font-size:12px;margin-left:4px;">${ds}</span>
+      </div>
+      <!-- 자유 메모장 -->
+      <div style="border:1px solid #e8e8e4;border-radius:8px;padding:10px 12px;margin-bottom:12px;background:#fffef5;">
+        <div style="font-size:11px;color:#888;font-weight:600;margin-bottom:6px;">📝 메모장</div>
+        <textarea id="day-free-memo-${ds}" rows="4" placeholder="자유롭게 메모하세요..." style="font-size:12px;resize:vertical;width:100%;box-sizing:border-box;border:none;background:transparent;outline:none;line-height:1.6;">${(window._dayMemos&&window._dayMemos[ds])||''}</textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:4px;">
+          <button onclick="saveDayMemo('${ds}')" style="font-size:11px;padding:3px 10px;border:1px solid #e8e8e4;border-radius:4px;background:#fff;cursor:pointer;color:#555;">저장</button>
+        </div>
       </div>
       <div id="outside-list-${ds}" style="margin-bottom:12px;">${rOutsideItems(ds)}</div>
       <div style="border:1px solid #e8e8e4;border-radius:8px;padding:12px;background:#fafaf8;">
@@ -2422,7 +2460,7 @@ function rOrderNotes(oid){
   return notes.map(function(n,i){
     return '<div style="display:flex;align-items:flex-start;gap:6px;padding:5px 8px;background:#f8f8f6;border-radius:6px;margin-bottom:3px;">'
       +'<input type="checkbox" '+(n.done?'checked':'')+' data-oid="'+oid+'" data-i="'+i+'" onchange="togOrderNote(this)" style="margin-top:2px;accent-color:#1a1a1a;cursor:pointer;"/>'
-      +'<span style="font-size:12px;flex:1;'+(n.done?'text-decoration:line-through;color:#aaa;':'color:#333;')+'">'+n.text+'</span>'
+      +'<span style="font-size:12px;flex:1;white-space:pre-wrap;word-break:break-all;'+(n.done?'text-decoration:line-through;color:#aaa;':'color:#333;')+'">'+n.text+'</span>'
       +'<span data-oid="'+oid+'" data-i="'+i+'" onclick="delOrderNote(this.dataset.oid,this.dataset.i)" style="color:#ccc;cursor:pointer;font-size:12px;flex-shrink:0;">×</span>'
       +'</div>';
   }).join('');
@@ -2463,6 +2501,27 @@ function getVendorOptions(){
     .filter(function(c){return c.client_type==='vendor'||c.client_type==='발주처';})
     .map(function(c){return '<option value="'+c.name+'">'+c.name+'</option>';})
     .join('');
+}
+
+// 날짜별 자유 메모 저장/로드
+if(!window._dayMemos)window._dayMemos={};
+async function saveDayMemo(ds){
+  const txt=document.getElementById('day-free-memo-'+ds)?.value||'';
+  window._dayMemos[ds]=txt;
+  // plan_notes 테이블에 저장 (type='day_memo')
+  const existing=await api('plan_notes','GET',null,'date=eq.'+ds+'&type=eq.day_memo');
+  if(existing&&existing.length){
+    await api('plan_notes','PATCH',{note:txt},'id=eq.'+existing[0].id);
+  } else {
+    await api('plan_notes','POST',{date:ds,note:txt,type:'day_memo'});
+  }
+  toast('📝 메모 저장됐어요');
+}
+async function loadDayMemos(){
+  const memos=await api('plan_notes','GET',null,'type=eq.day_memo');
+  if(memos&&memos.length){
+    memos.forEach(m=>{if(!window._dayMemos)window._dayMemos={};window._dayMemos[m.date]=m.note;});
+  }
 }
 
 function rOutsideItems(ds){

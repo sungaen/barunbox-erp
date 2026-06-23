@@ -578,6 +578,7 @@ function rOrders(){
   h+='<button class="btn" onclick="openReorderModal()">↻ 재발주</button>';
   h+='<label class="btn" style="cursor:pointer;background:#7C3AED;color:#fff;border-color:#7C3AED;" title="PDF 발주서 업로드 → AI 자동 입력">🤖 AI 자동입력<input type="file" accept=".pdf" style="display:none;" onchange="importOrderFromPDF(this)"/></label>';
   h+='<button class="btn" style="background:#0891b2;color:#fff;border-color:#0891b2;" onclick="openCartonOrderForm()">📦 카톤 발주</button>';
+  h+='<button class="btn" style="background:#ef4444;color:#fff;border-color:#ef4444;" onclick="openShipDateFixModal()">🔧 출고일 일괄 복구</button>';
   h+='</div>';
   h+='<div style="background:#fff;border:1px solid #e8e8e4;border-radius:10px;padding:12px 16px;margin-bottom:10px;">';
   h+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
@@ -2401,6 +2402,58 @@ function getDayOrdersSorted(ds, orders){
   return sorted;
 }
 
+// 그룹 단위 드래그
+let _dayDragGroup=null;
+if(!window._dayGroupSort)window._dayGroupSort={};
+
+function dayGroupDragStart(e){
+  _dayDragGroup=e.currentTarget;
+  e.dataTransfer.effectAllowed='move';
+  e.currentTarget.style.opacity='0.5';
+  e.stopPropagation();
+}
+function dayGroupDragOver(e){
+  e.preventDefault();
+  e.stopPropagation();
+  e.dataTransfer.dropEffect='move';
+  e.currentTarget.style.outline='2px dashed #1a1a1a';
+}
+function dayGroupDragLeave(e){
+  e.currentTarget.style.outline='none';
+}
+function dayGroupDrop(e){
+  e.preventDefault();
+  e.stopPropagation();
+  const target=e.currentTarget;
+  target.style.outline='none';
+  if(!_dayDragGroup||_dayDragGroup===target)return;
+  const ds=target.dataset.ds;
+  const srcKey=_dayDragGroup.dataset.groupkey;
+  const tgtKey=target.dataset.groupkey;
+  // 그룹 순서 저장
+  if(!window._dayGroupSort[ds])window._dayGroupSort[ds]=[];
+  // 현재 그룹 키 순서 가져오기
+  const dayOrders=getOrdersForDate(ds);
+  const sorted=getDayOrdersSorted(ds,dayOrders);
+  // 기존 그룹 키 순서
+  const seen=new Set();
+  const groupKeys=[];
+  sorted.forEach(o=>{const k=o.clientName||o.client_id||'기타';if(!seen.has(k)){seen.add(k);groupKeys.push(k);}});
+  // 순서 변경
+  const si=groupKeys.indexOf(srcKey);
+  const ti=groupKeys.indexOf(tgtKey);
+  if(si<0||ti<0)return;
+  groupKeys.splice(si,1);
+  groupKeys.splice(ti,0,srcKey);
+  // 그룹 키 순서에 맞게 oid 배열 재정렬
+  const newIds=[];
+  groupKeys.forEach(k=>{sorted.filter(o=>(o.clientName||o.client_id||'기타')===k).forEach(o=>newIds.push(o.id));});
+  _dayOrderSort[ds]=newIds;
+  _dayDragGroup.style.opacity='1';
+  _dayDragGroup=null;
+  rCalDay();
+}
+
 function dayOrderDragStart(e){
   _dayDragSrc=e.currentTarget;
   e.dataTransfer.effectAllowed='move';
@@ -2615,11 +2668,16 @@ async function saveNote(nid,ds){
 }
 
 async function markShipped(oid){
-  await api('orders','PATCH',{shipped:true,shipped_date:new Date().toISOString().split('T')[0],status:'출고완료'},`id=eq.${oid}`);
-  const o=DB.orders.find(x=>x.id===oid);if(o){o.shipped=true;o.status='출고완료';}
-  toast('출고 완료 처리됐어요 🚚');
+  const o=DB.orders.find(x=>x.id===oid);
+  if(!o){toast('발주 정보를 찾을 수 없어요');return;}
+  // 출고일: 출고관리에 지정된 날짜(shipped_date/dd) 우선, 없으면 납기일(dd), 그래도 없으면 오늘
+  const shipDate=o.shipped_date||o.dd||new Date().toISOString().split('T')[0];
+  await api('orders','PATCH',{shipped:true,shipped_date:shipDate,status:'출고완료'},`id=eq.${oid}`);
+  o.shipped=true;o.status='출고완료';o.shipped_date=shipDate;
+  toast('출고 완료 처리됐어요 🚚 ('+shipDate+')');
   rCalendar();
-  if(curTab==='list')rList();
+  rVendor();restoreVendorState();
+  renderCurrent();
 }
 
 /* ══ 5. 카톤 재고 ══ */
@@ -3614,6 +3672,62 @@ async function delClient(id){
 }
 
 /* ══ 재발주 ══ */
+function openShipDateFixModal(){
+  const today=new Date().toISOString().split('T')[0];
+  // 오늘 날짜로 출고완료 처리된 발주들 찾기
+  const candidates=DB.orders.filter(o=>o.status==='출고완료'&&o.shipped_date===today);
+  if(!candidates.length){
+    toast('오늘 날짜로 출고완료 처리된 발주가 없어요');
+    return;
+  }
+  openMod(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+    <span style="font-size:15px;font-weight:600;">🔧 출고일 일괄 복구</span>
+    <button class="btn btn-sm" onclick="closeMod()">닫기</button>
+  </div>
+  <div style="background:#fff3e0;border-radius:8px;padding:10px 14px;margin-bottom:1rem;font-size:12px;color:#e65100;">
+    ⚠️ 오늘(${today}) 날짜로 출고완료 처리된 발주 ${candidates.length}건입니다. 체크한 발주만 아래 날짜로 변경돼요.
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <label style="font-size:12px;display:flex;align-items:center;gap:6px;">
+      <input type="checkbox" id="shipfix-all" onchange="document.querySelectorAll('.shipfix-chk').forEach(c=>c.checked=this.checked)"/> 전체 선택
+    </label>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <label style="font-size:12px;color:#555;">변경할 날짜</label>
+      <input type="date" id="shipfix-date" style="width:140px;"/>
+    </div>
+  </div>
+  <div style="max-height:400px;overflow-y:auto;border:1px solid #e8e8e4;border-radius:8px;">
+    ${candidates.map(o=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #f0f0ee;font-size:12px;">
+      <input type="checkbox" class="shipfix-chk" data-oid="${o.id}"/>
+      <span style="flex:1;">${o.clientName||'-'} · ${o.productName||o.name||'-'}</span>
+      <span style="color:#888;">${(o.qty||0).toLocaleString()}ea</span>
+    </div>`).join('')}
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:1rem;">
+    <button class="btn" onclick="closeMod()">취소</button>
+    <button class="btn btn-success" onclick="executeShipDateFix()">선택 항목 날짜 변경</button>
+  </div>`);
+}
+
+async function executeShipDateFix(){
+  const newDate=document.getElementById('shipfix-date')?.value;
+  if(!newDate){toast('변경할 날짜를 선택해주세요');return;}
+  const checked=[...document.querySelectorAll('.shipfix-chk:checked')];
+  if(!checked.length){toast('변경할 발주를 선택해주세요');return;}
+  let count=0;
+  for(const chk of checked){
+    const oid=chk.dataset.oid;
+    await api('orders','PATCH',{shipped_date:newDate},'id=eq.'+oid);
+    const o=DB.orders.find(x=>x.id===oid);
+    if(o)o.shipped_date=newDate;
+    count++;
+  }
+  toast('✅ '+count+'건 출고일이 '+newDate+'로 변경됐어요');
+  closeMod();
+  rCalendar();
+  renderCurrent();
+}
+
 function openReorderModal(){
   // 재발주 목록: 제품별 대표 1건만 표시
   // src_order_id 기준으로 그룹핑 → 원본 또는 가장 최신 재발주 1건
